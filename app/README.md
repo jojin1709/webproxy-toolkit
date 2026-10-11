@@ -1,7 +1,13 @@
-# Tauri + React + Typescript
+# app — WebProxy Toolkit
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Frontend (React + Vite) and Tauri 2 backend for WebProxy Toolkit.
 
-## Recommended IDE Setup
+See the [repository README](../README.md) for the full description, status, and getting-started guide.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+```powershell
+npm install
+npm run tauri dev    # desktop app
+npm run build        # strict tsc + vite
+```
+
+Rust tests live in `src-tauri/tests/` — run `cargo test` from `src-tauri`.

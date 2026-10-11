@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+*.log
+qa/shots/
+.DS_Store
+Thumbs.db
+*.local
+.vite/

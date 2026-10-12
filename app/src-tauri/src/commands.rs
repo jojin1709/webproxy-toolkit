@@ -1,4 +1,4 @@
-use crate::proxy::{send_raw_request, HttpExchange, SharedProxy};
+use crate::proxy::{send_raw_request, send_raw_request_follow, HttpExchange, SharedProxy};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -212,6 +212,7 @@ pub async fn repeater_send(
     state: State<'_, SharedProxy>,
     raw: String,
     url_hint: Option<String>,
+    follow: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let (host, port, tls) = if let Some(u) = url_hint.clone() {
         parse_host_port(&u, false)?
@@ -234,20 +235,29 @@ pub async fn repeater_send(
     let target = url_hint
         .clone()
         .unwrap_or_else(|| format!("http{}://{host}:{port}", if tls { "s" } else { "" }));
-    match send_raw_request(raw, host, port, tls).await {
-        Ok((status, headers, body, time_ms)) => {
+    match send_raw_request_follow(raw, url_hint, follow.unwrap_or(false)).await {
+        Ok(r) => {
             log_event(
                 &app,
                 &state,
                 "repeater",
                 "info",
-                &format!("Request sent to {target} — status {status}, {time_ms} ms"),
+                &if r.redirects > 0 {
+                    format!(
+                        "Request sent to {target} — status {}, {} ms, {} redirect(s) to {}",
+                        r.status, r.time_ms, r.redirects, r.final_url
+                    )
+                } else {
+                    format!("Request sent to {target} — status {}, {} ms", r.status, r.time_ms)
+                },
             );
             Ok(serde_json::json!({
-                "status": status,
-                "headers": headers,
-                "body": body,
-                "time_ms": time_ms,
+                "status": r.status,
+                "headers": r.headers,
+                "body": r.body,
+                "time_ms": r.time_ms,
+                "redirects": r.redirects,
+                "final_url": r.final_url,
             }))
         }
         Err(e) => {
@@ -256,6 +266,203 @@ pub async fn repeater_send(
         }
     }
 }
+
+#[tauri::command]
+pub fn repeater_history_add(
+    state: State<'_, SharedProxy>,
+    tab_id: i64,
+    req_raw: String,
+    resp_raw: Option<String>,
+    status: Option<i64>,
+    time_ms: Option<i64>,
+) -> Result<i64, String> {
+    db_of(&state)?.insert_repeater_history(
+        tab_id,
+        &req_raw,
+        resp_raw.as_deref(),
+        status,
+        time_ms,
+    )
+}
+
+#[tauri::command]
+pub fn repeater_history_list(
+    state: State<'_, SharedProxy>,
+    tab_id: i64,
+    limit: Option<usize>,
+) -> Result<Vec<crate::db::RepeaterHistoryEntry>, String> {
+    db_of(&state)?.list_repeater_history(tab_id, limit.unwrap_or(100).min(500))
+}
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SearchHit {
+    pub source: String, // history | log
+    pub id: i64,
+    pub title: String,
+    pub detail: String,
+    pub snippet: String,
+    pub tab: String, // where to open the hit
+}
+
+fn snippet_of(hay: &str, needle: &str) -> Option<String> {
+    if needle.is_empty() {
+        return None;
+    }
+    let flat: String = hay
+        .chars()
+        .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+        .collect();
+    let idx = flat.to_lowercase().find(&needle.to_lowercase())?;
+    let start = idx.saturating_sub(48);
+    let end = (idx + needle.len() + 90).min(flat.len());
+    let mut s = start;
+    while s > 0 && !flat.is_char_boundary(s) {
+        s -= 1;
+    }
+    let mut e = end;
+    while e < flat.len() && !flat.is_char_boundary(e) {
+        e += 1;
+    }
+    let prefix = if start > 0 { "…" } else { "" };
+    let suffix = if end < flat.len() { "…" } else { "" };
+    Some(format!("{prefix}{}{suffix}", &flat[s..e]))
+}
+
+fn head_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+const BODY_SCAN_LIMIT: usize = 8 * 1024;
+
+/// Searches field by field (cheap fields first) so a single match never forces
+/// the whole exchange — bodies included — to be copied and lowercased.
+fn history_hit(e: &HttpExchange, q: &str) -> Option<SearchHit> {
+    let status = e.status.map(|s| s.to_string()).unwrap_or_default();
+    let mut snippet: Option<String> = None;
+
+    for field in [&e.url, &e.host, &e.method, &status] {
+        if let Some(s) = snippet_of(field, q) {
+            snippet = Some(s);
+            break;
+        }
+    }
+    if snippet.is_none() {
+        'headers: for (k, v) in e.req_headers.iter().chain(e.resp_headers.iter()) {
+            if let Some(s) = snippet_of(k, q) {
+                snippet = Some(format!("{s}: {v}"));
+                break 'headers;
+            }
+            if let Some(s) = snippet_of(v, q) {
+                snippet = Some(format!("{k}: {s}"));
+                break 'headers;
+            }
+        }
+    }
+    if snippet.is_none() {
+        for body in [&e.req_body, &e.resp_body].into_iter().flatten() {
+            if let Some(s) = snippet_of(head_bytes(body, BODY_SCAN_LIMIT), q) {
+                snippet = Some(s);
+                break;
+            }
+        }
+    }
+    let snippet = snippet?;
+
+    Some(SearchHit {
+        source: "history".into(),
+        id: e.id as i64,
+        title: format!("{} {}", e.method, e.url),
+        detail: match e.status {
+            Some(s) => format!("{} · {} · {} ms", e.host, s, e.time_ms.unwrap_or(0)),
+            None => e.host.clone(),
+        },
+        snippet,
+        tab: "proxy".into(),
+    })
+}
+
+fn search_all(state: &SharedProxy, q: &str, cap: usize) -> Vec<SearchHit> {
+    let mut out: Vec<SearchHit> = Vec::new();
+    {
+        let hist = state.history.lock();
+        for e in hist.iter().rev() {
+            if out.len() >= cap {
+                break;
+            }
+            if let Some(hit) = history_hit(e, q) {
+                out.push(hit);
+            }
+        }
+    }
+    if out.len() < cap {
+        if let Ok(logs) = db_of(state).and_then(|db| db.list_logs(None, None, Some(q), cap)) {
+            for l in logs {
+                if out.len() >= cap {
+                    break;
+                }
+                out.push(SearchHit {
+                    source: "log".into(),
+                    id: l.id,
+                    title: l.message.clone(),
+                    detail: format!("{} · {} · {}", l.tool, l.level, l.ts),
+                    snippet: l.message,
+                    tab: "logger".into(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Trimmed query plus the clamped hit budget; `None` means "nothing to search".
+fn normalize_query(query: &str, limit: Option<usize>) -> Option<(String, usize)> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return None;
+    }
+    Some((q, limit.unwrap_or(200).min(1000)))
+}
+
+/// Runs off the UI thread: with a full history the scan is O(history × body).
+#[tauri::command]
+pub async fn global_search(
+    state: State<'_, SharedProxy>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchHit>, String> {
+    let Some((q, cap)) = normalize_query(&query, limit) else {
+        return Ok(Vec::new());
+    };
+    let sp: SharedProxy = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || search_all(&sp, &q, cap))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ws_conns_list(
+    state: State<'_, SharedProxy>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::db::WsConn>, String> {
+    db_of(&state)?.list_ws_conns(limit.unwrap_or(200).min(2000))
+}
+
+#[tauri::command]
+pub fn ws_frames_list(
+    state: State<'_, SharedProxy>,
+    conn_id: i64,
+    limit: Option<usize>,
+) -> Result<Vec<crate::db::WsFrame>, String> {
+    db_of(&state)?.list_ws_frames(conn_id, limit.unwrap_or(500).min(5000))
+}
+
 
 #[tauri::command]
 pub fn ca_export_path() -> Result<String, String> {
@@ -757,10 +964,145 @@ pub fn register(
             repeater_tabs_list,
             repeater_tab_save,
             repeater_tab_delete,
+            repeater_history_add,
+            repeater_history_list,
+            global_search,
+            ws_conns_list,
+            ws_frames_list,
             hash_compute,
             log_add,
             log_list,
             log_clear,
             sequencer_sample,
         ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exchange(url: &str, body: Option<&str>) -> HttpExchange {
+        HttpExchange {
+            id: 7,
+            started_at: "2026-10-11 09:12:00".into(),
+            time_ms: Some(42),
+            client_addr: None,
+            host: "shop.example.com".into(),
+            method: "GET".into(),
+            url: url.into(),
+            req_headers: vec![("Host".into(), "shop.example.com".into())],
+            req_body: None,
+            status: Some(200),
+            resp_headers: vec![("Content-Type".into(), "text/html".into())],
+            resp_body: body.map(|s| s.to_string()),
+            tls: true,
+            websocket: false,
+            in_scope: true,
+        }
+    }
+
+    #[test]
+    fn snippet_keeps_context_around_match() {
+        let hay = format!(
+            "{}{}{}",
+            "a".repeat(120),
+            "needle-in-haystack",
+            "b".repeat(200)
+        );
+        let s = snippet_of(&hay, "needle").expect("match");
+        assert!(s.contains("needle"), "{s}");
+        assert!(s.starts_with('…'), "{s}");
+        assert!(s.ends_with('…'), "{s}");
+        assert!(s.len() < hay.len());
+        assert!(s.contains(&"a".repeat(20)), "keeps leading context");
+        assert!(s.contains(&"b".repeat(20)), "keeps trailing context");
+    }
+
+    #[test]
+    fn snippet_omits_edge_ellipses_at_boundaries() {
+        let hay = "needle at the very start".to_string();
+        let s = snippet_of(&hay, "needle").expect("match");
+        assert!(s.starts_with("needle"), "{s}");
+        assert!(!s.starts_with('…'), "{s}");
+    }
+
+
+    #[test]
+    fn snippet_is_none_without_match() {
+        assert_eq!(snippet_of("hello world", "zzz"), None);
+        assert_eq!(snippet_of("hello world", ""), None);
+    }
+
+    #[test]
+    fn head_bytes_respects_char_boundary() {
+        let s = "héllo wörld 世界";
+        for max in 0..s.len() + 2 {
+            let h = head_bytes(s, max);
+            assert!(h.len() <= max, "max {max}");
+            assert!(s.starts_with(h), "max {max}");
+        }
+        assert_eq!(head_bytes(s, 10_000), s);
+    }
+
+    #[test]
+    fn snippet_flattens_newlines_and_stays_char_boundary() {
+        let hay = "line one\r\nline two: héllo\r\nline three";
+        let s = snippet_of(hay, "héllo").expect("match");
+        assert!(!s.contains('\n'), "{s}");
+        assert!(s.contains("héllo"), "{s}");
+    }
+
+    #[test]
+    fn history_hit_matches_url_body_and_headers() {
+        let e = exchange(
+            "https://shop.example.com/api/products?page=2",
+            Some(r#"{"total":2,"name":"Gadget"}"#),
+        );
+        assert!(history_hit(&e, "gadget").is_some());
+        assert!(history_hit(&e, "page=2").is_some());
+        assert!(history_hit(&e, "Content-Type").is_some());
+        let hit = history_hit(&e, "Gadget").unwrap();
+        assert_eq!(hit.source, "history");
+        assert_eq!(hit.tab, "proxy");
+        assert_eq!(hit.id, 7);
+        assert!(hit.title.starts_with("GET "));
+        assert!(history_hit(&e, "nope").is_none());
+    }
+
+    #[test]
+    fn normalize_query_trims_and_clamps() {
+        assert!(normalize_query("   ", None).is_none());
+        assert!(normalize_query("", Some(10)).is_none());
+        let (q, cap) = normalize_query("  /x  ", Some(5000)).unwrap();
+        assert_eq!(q, "/x");
+        assert_eq!(cap, 1000);
+        assert_eq!(normalize_query("x", None).unwrap().1, 200);
+        assert_eq!(normalize_query("x", Some(5)).unwrap().1, 5);
+    }
+
+    #[test]
+    fn search_all_merges_history_and_logs_up_to_cap() {
+        let sp: SharedProxy = Arc::new(crate::proxy::ProxyState::default());
+        let path =
+            std::env::temp_dir().join(format!("wt-search-test-{}-a.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::open(&path).expect("open temp db");
+        db.insert_log("proxy", "info", "gadget seen in the log").unwrap();
+        *sp.db.write() = Some(db);
+        {
+            let mut hist = sp.history.lock();
+            hist.push(exchange("http://one.test/gadget", None));
+            hist.push(exchange("http://two.test/other", None));
+        }
+
+        assert!(search_all(&sp, "nothing-matches-this", 10).is_empty());
+        let hits = search_all(&sp, "gadget", 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source, "history");
+        let hits = search_all(&sp, "gadget", 10);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].source, "history");
+        assert_eq!(hits[1].source, "log");
+        assert_eq!(hits[1].tab, "logger");
+    }
 }

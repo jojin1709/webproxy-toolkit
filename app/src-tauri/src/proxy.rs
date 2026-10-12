@@ -628,7 +628,7 @@ async fn ws_relay<C>(
                         }
                         if cparse {
                             cbuf.extend_from_slice(&chunk);
-                            if drain_ws_frames(state.clone(), conn_id, "c", &mut cbuf).is_err() {
+                            if drain_ws_frames(&state, conn_id, "c", &mut cbuf).is_err() {
                                 cparse = false;
                                 cbuf.clear();
                                 ws_warn_fallback(&state, "c");
@@ -647,7 +647,7 @@ async fn ws_relay<C>(
                         }
                         if sparse {
                             sbuf.extend_from_slice(&chunk);
-                            if drain_ws_frames(state.clone(), conn_id, "s", &mut sbuf).is_err() {
+                            if drain_ws_frames(&state, conn_id, "s", &mut sbuf).is_err() {
                                 sparse = false;
                                 sbuf.clear();
                                 ws_warn_fallback(&state, "s");
@@ -816,7 +816,7 @@ async fn handle_conn(state: SharedProxy, mut stream: TcpStream, peer: String) ->
     record_exchange(
         &state,
         peer,
-        host,
+        host.clone(),
         method2,
         url.clone(),
         h3,
@@ -1002,7 +1002,7 @@ async fn handle_connect(
     record_exchange(
         &state,
         peer,
-        host,
+        host.clone(),
         method2,
         url.clone(),
         h3,

@@ -100,6 +100,61 @@
     }),
   ];
 
+  const wsConns = [
+    {
+      id: 1,
+      ts_start: "2026-10-11 09:14:02",
+      ts_end: null,
+      url: "/realtime",
+      host: "shop.example.com",
+      port: 443,
+      tls: true,
+      msgs_out: 3,
+      msgs_in: 4,
+    },
+    {
+      id: 2,
+      ts_start: "2026-10-11 09:18:40",
+      ts_end: "2026-10-11 09:18:52",
+      url: "/ws/notifications",
+      host: "analytics.track.io",
+      port: 443,
+      tls: true,
+      msgs_out: 1,
+      msgs_in: 1,
+    },
+  ];
+
+  const wsFrames = {
+    1: [
+      { id: 1, conn_id: 1, ts: "2026-10-11 09:14:03", dir: "c", opcode: 1, len: 27, payload: '{"type":"subscribe","ch":"cart"}' },
+      { id: 2, conn_id: 1, ts: "2026-10-11 09:14:03", dir: "s", opcode: 1, len: 31, payload: '{"type":"ack","ch":"cart","ok":true}' },
+      { id: 3, conn_id: 1, ts: "2026-10-11 09:14:11", dir: "s", opcode: 1, len: 42, payload: '{"type":"cart","items":2,"total":"49.90"}' },
+      { id: 4, conn_id: 1, ts: "2026-10-11 09:14:19", dir: "c", opcode: 9, len: 0, payload: "" },
+      { id: 5, conn_id: 1, ts: "2026-10-11 09:14:19", dir: "s", opcode: 10, len: 0, payload: "" },
+      { id: 6, conn_id: 1, ts: "2026-10-11 09:14:27", dir: "s", opcode: 2, len: 16, payload: "0001 0203 0405 0607 0809 0a0b 0c0d 0e0f" },
+    ],
+    2: [
+      { id: 7, conn_id: 2, ts: "2026-10-11 09:18:41", dir: "c", opcode: 1, len: 24, payload: '{"type":"hello","v":1}' },
+      { id: 8, conn_id: 2, ts: "2026-10-11 09:18:52", dir: "s", opcode: 8, len: 2, payload: "\u0003e8" },
+    ],
+  };
+
+  const LOGS = [
+    { id: 9, ts: "2026-10-11 09:22:31", tool: "repeater", level: "info", message: "GET https://shop.example.com/api/profile -> 500 in 74ms" },
+    { id: 8, ts: "2026-10-11 09:21:17", tool: "proxy", level: "info", message: "Recorded GET fonts.gstatic.com/s/inter/v18/font.woff2 (200)" },
+    { id: 7, ts: "2026-10-11 09:19:03", tool: "proxy", level: "info", message: "Recorded POST shop.example.com/api/cart (201)" },
+    { id: 6, ts: "2026-10-11 09:16:42", tool: "scope", level: "warn", message: "Removed analytics.track.io from scope" },
+    { id: 5, ts: "2026-10-11 09:15:35", tool: "proxy", level: "info", message: "Intercept off (requests+responses disabled)" },
+    { id: 4, ts: "2026-10-11 09:14:28", tool: "repeater", level: "info", message: "Tab 1 saved" },
+    { id: 3, ts: "2026-10-11 09:13:21", tool: "proxy", level: "warn", message: "Held request dropped by user" },
+    { id: 2, ts: "2026-10-11 09:12:14", tool: "system", level: "error", message: "sequencer_sample: connection refused (skipped 1 of 20)" },
+    { id: 1, ts: "2026-10-11 09:11:07", tool: "proxy", level: "info", message: "Listener started on 127.0.0.1:18080" },
+  ];
+
+  const repeaterHistory = {};
+  let repeaterHistorySeq = 1;
+
   const held = {
     id: 1,
     raw_request:
@@ -164,6 +219,69 @@
       return null;
     },
     history_list: () => history,
+    history_get: (a) => history.find((e) => e.id === (a && a.id)) || null,
+    ws_conns_list: () => wsConns,
+    ws_frames_list: (a) => (wsFrames[(a && a.connId) || 1] || []),
+    global_search: (a) => {
+      const q = String((a && a.query) || "").trim().toLowerCase();
+      if (!q) return [];
+      const out = [];
+      for (let i = history.length - 1; i >= 0 && out.length < 200; i--) {
+        const e = history[i];
+        const hay = [
+          e.url,
+          e.host,
+          e.method,
+          String(e.status ?? ""),
+          e.req_headers.map(([k, v]) => `${k}: ${v}`).join("\n"),
+          e.req_body || "",
+          e.resp_headers.map(([k, v]) => `${k}: ${v}`).join("\n"),
+          e.resp_body || "",
+        ].join("\n");
+        const at = hay.toLowerCase().indexOf(q);
+        if (at === -1) continue;
+        const flat = hay.replace(/[\r\n]+/g, " ");
+        const fat = flat.toLowerCase().indexOf(q);
+        const s = Math.max(0, fat - 48);
+        out.push({
+          source: "history",
+          id: e.id,
+          title: `${e.method} ${e.url}`,
+          detail: `${e.host} · ${e.status ?? "-"} · ${e.time_ms} ms`,
+          snippet: flat.slice(s, s + 140),
+          tab: "proxy",
+        });
+      }
+      for (const l of LOGS) {
+        if (out.length >= 200) break;
+        if (!l.message.toLowerCase().includes(q)) continue;
+        out.push({
+          source: "log",
+          id: l.id,
+          title: l.message,
+          detail: `${l.tool} · ${l.level} · ${l.ts}`,
+          snippet: l.message,
+          tab: "logger",
+        });
+      }
+      return out;
+    },
+    repeater_history_add: (a) => {
+      const tid = (a && a.tabId) || 1;
+      repeaterHistory[tid] = repeaterHistory[tid] || [];
+      repeaterHistory[tid].unshift({
+        id: repeaterHistorySeq++,
+        tab_id: tid,
+        sent_at: "2026-10-11 09:30:00",
+        req_raw: (a && a.reqRaw) || "",
+        resp_raw: (a && a.respRaw) || null,
+        status: (a && a.status) ?? null,
+        time_ms: (a && a.timeMs) ?? null,
+      });
+      repeaterHistory[tid] = repeaterHistory[tid].slice(0, 100);
+      return null;
+    },
+    repeater_history_list: (a) => repeaterHistory[(a && a.tabId) || 1] || [],
     match_list: () => [
       {
         id: 1,
@@ -194,27 +312,32 @@
     ],
     repeater_tab_save: (a) => (a && a.id) || 1,
     repeater_tab_delete: () => null,
-    repeater_send: () => ({
-      status: 200,
-      headers: [
-        ["content-type", "text/html; charset=utf-8"],
-        ["server", "mock/1.0"],
-      ],
-      body: "<!doctype html><html><body><h1>Mock response</h1></body></html>",
-      time_ms: 91,
-    }),
+    repeater_send: (a) =>
+      a && a.follow
+        ? {
+            status: 200,
+            headers: [
+              ["content-type", "text/html; charset=utf-8"],
+              ["server", "mock/1.0"],
+            ],
+            body: "<!doctype html><html><body><h1>Mock response</h1></body></html>",
+            time_ms: 91,
+            redirects: 2,
+            final_url: "https://shop.example.com/checkout",
+          }
+        : {
+            status: 302,
+            headers: [
+              ["location", "https://shop.example.com/checkout"],
+              ["content-length", "0"],
+            ],
+            body: "",
+            time_ms: 44,
+            redirects: 0,
+            final_url: null,
+          },
     init_ca: () => "C:\\Users\\qa\\AppData\\Local\\WebProxyToolkit\\ca.crt",
-    log_list: () => [
-      { id: 9, ts: "2026-10-11 09:22:31", tool: "repeater", level: "info", message: "GET https://shop.example.com/api/profile -> 500 in 74ms" },
-      { id: 8, ts: "2026-10-11 09:21:17", tool: "proxy", level: "info", message: "Recorded GET fonts.gstatic.com/s/inter/v18/font.woff2 (200)" },
-      { id: 7, ts: "2026-10-11 09:19:03", tool: "proxy", level: "info", message: "Recorded POST shop.example.com/api/cart (201)" },
-      { id: 6, ts: "2026-10-11 09:16:42", tool: "scope", level: "warn", message: "Removed analytics.track.io from scope" },
-      { id: 5, ts: "2026-10-11 09:15:35", tool: "proxy", level: "info", message: "Intercept off (requests+responses disabled)" },
-      { id: 4, ts: "2026-10-11 09:14:28", tool: "repeater", level: "info", message: "Tab 1 saved" },
-      { id: 3, ts: "2026-10-11 09:13:21", tool: "proxy", level: "warn", message: "Held request dropped by user" },
-      { id: 2, ts: "2026-10-11 09:12:14", tool: "system", level: "error", message: "sequencer_sample: connection refused (skipped 1 of 20)" },
-      { id: 1, ts: "2026-10-11 09:11:07", tool: "proxy", level: "info", message: "Listener started on 127.0.0.1:18080" },
-    ],
+    log_list: () => LOGS,
     log_clear: () => null,
     log_add: () => null,
     sequencer_sample: () => [

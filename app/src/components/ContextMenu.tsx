@@ -18,11 +18,15 @@ export function useContextMenu() {
   useEffect(() => {
     if (!menu) return;
     const close = (e: MouseEvent) => {
+      // Let a click on the opener itself reach the opener's click handler,
+      // so it can decide whether to toggle the menu shut.
+      if (opener.current && opener.current.contains(e.target as Node)) return;
       if (ref.current && ref.current.contains(e.target as Node)) return;
       setMenu(null);
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.key === "Tab") {
+        e.preventDefault();
         setMenu(null);
         const el = opener.current;
         if (el) (el.closest<HTMLElement>("[tabindex='0'], button, [role='tab']") ?? el).focus();
@@ -60,19 +64,31 @@ export function useContextMenu() {
     };
   }, [menu]);
 
-  const open = (e: React.MouseEvent, items: MenuItem[]) => {
+  const open = (e: React.MouseEvent, items: MenuItem[], anchor?: { x: number; y: number }) => {
     e.preventDefault();
     e.stopPropagation();
-    opener.current = e.target instanceof HTMLElement ? e.target : null;
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    // Re-activating the opener toggles the menu shut (mousedown is suppressed
+    // for the opener so this handler is what sees the click).
+    if (menu && target && opener.current && opener.current.contains(target)) {
+      setMenu(null);
+      return;
+    }
+    opener.current = target;
     const w = 240;
     const h = Math.min(items.length * 26 + 8, 400);
-    const x = Math.min(e.clientX, window.innerWidth - w - 8);
-    const y = Math.min(e.clientY, window.innerHeight - h - 8);
+    const rawX = anchor ? anchor.x : e.clientX;
+    const rawY = anchor ? anchor.y : e.clientY;
+    const x = Math.min(rawX, window.innerWidth - w - 8);
+    const y = Math.min(rawY, window.innerHeight - h - 8);
     setMenu({ x: Math.max(4, x), y: Math.max(4, y), items });
   };
-
-  const node = menu ? (
-    <div
+  const closeNow = () => {
+    setMenu(null);
+    const el = opener.current;
+    if (el) (el.closest<HTMLElement>("[tabindex='0'], button, [role='tab']") ?? el).focus();
+  };
+  const node = menu ? (    <div
       ref={ref}
       className="ctx-menu"
       style={{ left: menu.x, top: menu.y }}
@@ -102,5 +118,5 @@ export function useContextMenu() {
     </div>
   ) : null;
 
-  return { open, node };
+  return { open, close: closeNow, node, isOpen: menu !== null };
 }

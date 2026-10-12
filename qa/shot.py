@@ -137,6 +137,68 @@ def run():
         shot(page, "23-dashboard-eventlog")
         ctx.close()
 
+        # ---- Group A3: Phase 2b (WS history, search, action menu, repeater history) ----
+        ctx, page = new_page(browser)
+        tab(page, "Proxy")
+        sub(page, "WebSockets")
+        stage[0] = "select ws conn"
+        conns = page.locator('div[aria-label="WebSocket connections"] tbody tr')
+        if conns.count() > 0:
+            conns.first.click()
+            page.wait_for_timeout(400)
+            shot(page, "24-proxy-ws")
+            stage[0] = "select ws frame"
+            frames = page.locator('div[aria-label="WebSocket frames"] tbody tr')
+            if frames.count() > 2:
+                frames.nth(2).click()
+                page.wait_for_timeout(350)
+                shot(page, "25-proxy-ws-frame")
+            stage[0] = "ws handshake"
+            page.locator('button[title="Show the reconstructed HTTP upgrade handshake"]').click()
+            page.wait_for_timeout(350)
+            shot(page, "26-proxy-ws-handshake")
+        else:
+            errors.append("no websocket connections rendered")
+
+        stage[0] = "global search"
+        page.locator('button[aria-label="Search"]').click()
+        page.wait_for_timeout(350)
+        page.locator(".searchdlg input").fill("cart")
+        page.wait_for_timeout(600)
+        shot(page, "27-search-dialog")
+        hits = page.locator(".searchdlg-hit")
+        if hits.count() == 0:
+            errors.append("global search returned no hits")
+        else:
+            stage[0] = "search jump"
+            page.locator(".searchdlg input").press("Enter")
+            page.wait_for_timeout(600)
+            shot(page, "28-search-jumped")
+            selected = page.locator(".history tbody tr.selected")
+            if selected.count() == 0:
+                errors.append("search jump did not select a history row")
+
+        stage[0] = "repeater follow + history"
+        tab(page, "Repeater")
+        page.locator('label.switch', has_text="Follow redirects").click()
+        page.locator(".btn.send").click()
+        page.wait_for_timeout(700)
+        shot(page, "29-repeater-redirects")
+        # a second send gives the tab a previous entry to step back to
+        stage[0] = "repeater second send"
+        page.locator(".btn.send").click()
+        page.wait_for_timeout(700)
+        older = page.locator('button[title^="Previous request"]')
+        if older.count() and not older.first.is_disabled():
+            older.first.click()
+            page.wait_for_timeout(400)
+            shot(page, "30-repeater-history-prev")
+        else:
+            errors.append("repeater history prev button stayed disabled after send")
+
+        tab(page, "Logger"); shot(page, "31-logger-search-source")
+        ctx.close()
+
         # ---- Group B: empty site map ----
         ctx, page = new_page(browser, {"sitemapEmpty": True})
         tab(page, "Target"); shot(page, "15-target-empty")
@@ -145,6 +207,17 @@ def run():
         # ---- Group C: intercept holding a message ----
         ctx, page = new_page(browser, {"intercept": True, "held": True})
         sub(page, "Intercept"); shot(page, "16-proxy-held")
+        stage[0] = "action menu"
+        page.locator('button[aria-label="Action"]').click()
+        page.wait_for_timeout(350)
+        shot(page, "32-intercept-action-menu")
+        stage[0] = "action menu open in repeater"
+        try:
+            page.get_by_role("menuitem", name="Open in Repeater").click()
+            page.wait_for_timeout(500)
+            shot(page, "33-action-open-in-repeater")
+        except Exception as e:
+            errors.append(f"action menu open-in-repeater failed: {e}")
         ctx.close()
 
         # ---- Group D: narrow viewport ----

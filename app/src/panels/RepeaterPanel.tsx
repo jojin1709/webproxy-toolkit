@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronRight, HelpCircle, Pencil, Settings } from "lucide-react";
-import { RepeaterTab, Transfer } from "../types";
+import { RepeaterHistoryEntry, RepeaterTab, Transfer } from "../types";
 import MessageView from "../components/MessageView";
 import SplitPane from "../components/SplitPane";
 
@@ -17,9 +17,20 @@ type Draft = {
   resp: string;
   status: number | null;
   timeMs: number | null;
+  finalUrl: string | null;
+  redirectCount: number;
 };
 
-const NEW_DRAFT: Draft = { id: null, name: "1", req: "", resp: "", status: null, timeMs: null };
+const NEW_DRAFT: Draft = {
+  id: null,
+  name: "1",
+  req: "",
+  resp: "",
+  status: null,
+  timeMs: null,
+  finalUrl: null,
+  redirectCount: 0,
+};
 
 export default function RepeaterPanel({ incoming, setToast }: Props) {
   const [tabs, setTabs] = useState<RepeaterTab[]>([]);
@@ -33,6 +44,32 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
   const [urlHint, setUrlHint] = useState("http://example.com/");
   const [editingTarget, setEditingTarget] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
+  const [follow, setFollow] = useState(false);
+  const [hist, setHist] = useState<RepeaterHistoryEntry[]>([]);
+  const [histIdx, setHistIdx] = useState<number | null>(null);
+
+  async function loadHistory(tabId: number | null) {
+    if (tabId == null) {
+      setHist([]);
+      setHistIdx(null);
+      return;
+    }
+    try {
+      const entries = await invoke<RepeaterHistoryEntry[]>("repeater_history_list", {
+        tabId,
+        limit: 50,
+      });
+      setHist(entries);
+      setHistIdx((prev) => (prev != null && prev < entries.length ? prev : null));
+    } catch (e) {
+      setToast(String(e));
+    }
+  }
+
+  useEffect(() => {
+    loadHistory(draft.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.id]);
 
   async function loadTabs() {
     try {
@@ -49,6 +86,7 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
 
   useEffect(() => {
     if (!incoming || incoming.seq === 0) return;
+    setHistIdx(null);
     setDraft({ ...NEW_DRAFT, name: nextName(tabs), req: incoming.raw });
     setUrlHint(incoming.url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,6 +100,7 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
   }
 
   function openTab(t: RepeaterTab) {
+    setHistIdx(null);
     setDraft({
       id: t.id,
       name: t.name,
@@ -69,6 +108,8 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
       resp: t.last_resp_raw ?? "",
       status: t.last_status,
       timeMs: t.last_time_ms,
+      finalUrl: null,
+      redirectCount: 0,
     });
   }
 
@@ -82,7 +123,7 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
         lastTimeMs: draft.timeMs,
         lastRespRaw: draft.resp || null,
       });
-      setDraft({ ...draft, id });
+      setDraft((d) => ({ ...d, id }));
       await loadTabs();
       setToast("Tab saved");
     } catch (e) {
@@ -95,6 +136,7 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
       await invoke("repeater_tab_delete", { id: draft.id });
       await loadTabs();
     }
+    setHistIdx(null);
     setDraft({ ...NEW_DRAFT, name: nextName(tabs), req: draft.req });
   }
 
@@ -106,29 +148,93 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
         headers: [string, string][];
         body: string;
         time_ms: number;
-      }>("repeater_send", { raw: draft.req, urlHint: urlHint || null });
+        redirects?: number;
+        final_url?: string;
+      }>("repeater_send", { raw: draft.req, urlHint: urlHint || null, follow });
       const resp =
         `HTTP/1.1 ${r.status}\n` +
         r.headers.map(([k, v]) => `${k}: ${v}`).join("\n") +
         "\n\n" +
         r.body;
-      setDraft({ ...draft, resp, status: r.status, timeMs: r.time_ms });
-      if (draft.id != null) {
-        await invoke("repeater_tab_save", {
-          id: draft.id,
+
+      // A response only has somewhere to live once the tab exists — create it
+      // with the response attached so the first send costs one write, not two.
+      const isNew = draft.id == null;
+      const tabId =
+        draft.id ??
+        (await invoke<number | null>("repeater_tab_save", {
+          id: null,
           name: draft.name,
           reqRaw: draft.req,
-          lastStatus: r.status,
-          lastTimeMs: r.time_ms,
-          lastRespRaw: resp,
-        });
-        await loadTabs();
+          lastStatus: null,
+          lastTimeMs: null,
+          lastRespRaw: null,
+        })) ??
+        null;
+      if (tabId == null) throw new Error("Could not create a Repeater tab for this request");
+
+      await invoke("repeater_history_add", {
+        tabId,
+        reqRaw: draft.req,
+        respRaw: resp,
+        status: r.status,
+        timeMs: r.time_ms,
+      });
+      await invoke("repeater_tab_save", {
+        id: tabId,
+        name: draft.name,
+        reqRaw: draft.req,
+        lastStatus: r.status,
+        lastTimeMs: r.time_ms,
+        lastRespRaw: resp,
+      });
+
+      setHistIdx(null);
+      setDraft((d) => ({
+        ...d,
+        id: tabId,
+        resp,
+        status: r.status,
+        timeMs: r.time_ms,
+        finalUrl: r.final_url ?? null,
+        redirectCount: r.redirects ?? 0,
+      }));
+      await Promise.all([loadTabs(), loadHistory(tabId)]);
+      if (r.status >= 300 && r.status < 400 && !follow) {
+        setToast(`Stopped at ${r.status} — enable Follow redirects to follow it`);
+      } else if (isNew) {
+        setToast("New Repeater tab created for this request");
       }
     } catch (e) {
-      setDraft({ ...draft, resp: `Error: ${e}` });
+      setDraft((d) => ({ ...d, resp: `Error: ${e}`, finalUrl: null, redirectCount: 0 }));
     } finally {
       setBusy(false);
     }
+  }
+
+  function showEntry(i: number) {
+    const entry = hist[i];
+    if (!entry) return;
+    setHistIdx(i);
+    setDraft((d) => ({
+      ...d,
+      req: entry.req_raw,
+      resp: entry.resp_raw ?? "",
+      status: entry.status,
+      timeMs: entry.time_ms,
+    }));
+  }
+
+  function goOlder() {
+    // hist is newest-first and a null index means "live view of the newest",
+    // so the first step back lands on the entry before it.
+    const next = histIdx == null ? 1 : histIdx + 1;
+    if (next < hist.length) showEntry(next);
+  }
+
+  function goNewer() {
+    if (histIdx == null || histIdx === 0) return;
+    showEntry(histIdx - 1);
   }
 
   const inspector = useMemo(() => parseRequest(draft.req), [draft.req]);
@@ -170,12 +276,34 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
         <button className="btn" disabled title="No request in flight">
           Cancel
         </button>
-        <button className="icon-btn" disabled title="Previous request in this tab">
+        <button
+          className="icon-btn"
+          title={histIdx == null ? "Previous request in this tab (newest shown)" : "Older request in this tab"}
+          disabled={hist.length < 2 || (histIdx != null && histIdx + 1 >= hist.length)}
+          onClick={goOlder}
+        >
           <ChevronLeft size={15} />
         </button>
-        <button className="icon-btn" disabled title="Next request in this tab">
+        <button
+          className="icon-btn"
+          title="Newer request in this tab"
+          disabled={histIdx == null || histIdx === 0}
+          onClick={goNewer}
+        >
           <ChevronRight size={15} />
         </button>
+        <span className="muted" title="Sent requests stored for this tab">
+          {hist.length === 0 ? "History: empty" : `History: ${hist.length} sent`}
+          {histIdx != null ? ` · ${hist.length - histIdx}/${hist.length}` : ""}
+        </span>
+        <label className="switch" title="Follow 3xx responses automatically (max 5 hops)">
+          <input
+            type="checkbox"
+            checked={follow}
+            onChange={(e) => setFollow(e.target.checked)}
+          />
+          Follow redirects
+        </label>
         <button
           className="btn"
           onClick={() => setStacked(!stacked)}
@@ -247,6 +375,24 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
                   <span className="row" style={{ gap: 6 }}>
                     {draft.status != null && <span className="chip">{draft.status}</span>}
                     {draft.timeMs != null && <span className="chip">{draft.timeMs} ms</span>}
+                    {draft.status != null &&
+                      draft.status >= 300 &&
+                      draft.status < 400 &&
+                      draft.redirectCount === 0 && (
+                        <span className="chip" title="Redirect — enable Follow redirects to follow it">
+                          redirect
+                        </span>
+                      )}
+                    {draft.redirectCount > 0 && (
+                      <span className="chip" title={draft.finalUrl ?? ""}>
+                        ↻ {draft.redirectCount} hop{draft.redirectCount === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    {histIdx != null && (
+                      <span className="chip" title="Historical send for this tab">
+                        history
+                      </span>
+                    )}
                   </span>
                 }
               />

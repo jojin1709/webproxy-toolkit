@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS repeater_tabs (
   updated_at   TEXT NOT NULL
 );
 
+-- one row per request sent from a Repeater tab (its per-tab back/forward history)
+CREATE TABLE IF NOT EXISTS repeater_history (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  tab_id    INTEGER NOT NULL,
+  sent_at   TEXT    NOT NULL,
+  req_raw   TEXT    NOT NULL,
+  resp_raw  TEXT,
+  status    INTEGER,
+  time_ms   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_repeater_history_tab ON repeater_history(tab_id, id);
+
 CREATE TABLE IF NOT EXISTS match_replace (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   enabled   INTEGER NOT NULL DEFAULT 1,

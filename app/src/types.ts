@@ -84,6 +84,47 @@ export type RepeaterTab = {
   sort_order: number;
 };
 
+export type RepeaterHistoryEntry = {
+  id: number;
+  tab_id: number;
+  sent_at: string;
+  req_raw: string;
+  resp_raw: string | null;
+  status: number | null;
+  time_ms: number | null;
+};
+
+export type WsConn = {
+  id: number;
+  ts_start: string;
+  ts_end: string | null;
+  url: string;
+  host: string;
+  port: number;
+  tls: boolean;
+  msgs_out: number;
+  msgs_in: number;
+};
+
+export type WsFrame = {
+  id: number;
+  conn_id: number;
+  ts: string;
+  dir: string;
+  opcode: number;
+  len: number;
+  payload: string;
+};
+
+export type SearchHit = {
+  source: "history" | "log";
+  id: number;
+  title: string;
+  detail: string;
+  snippet: string;
+  tab: string;
+};
+
 export type LogEntry = {
   id: number;
   ts: string;

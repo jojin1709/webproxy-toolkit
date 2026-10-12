@@ -37,6 +37,17 @@ pub struct LogEntry {
 }
 
 #[derive(Clone, serde::Serialize)]
+pub struct RepeaterHistoryEntry {
+    pub id: i64,
+    pub tab_id: i64,
+    pub sent_at: String,
+    pub req_raw: String,
+    pub resp_raw: Option<String>,
+    pub status: Option<i64>,
+    pub time_ms: Option<i64>,
+}
+
+#[derive(Clone, serde::Serialize)]
 pub struct WsConn {
     pub id: i64,
     pub ts_start: String,
@@ -106,6 +117,19 @@ pub fn open(project_path: &Path) -> Result<Arc<Db>, String> {
            payload TEXT
          );
          CREATE INDEX IF NOT EXISTS idx_ws_frames_conn ON ws_frames(conn_id, id);",
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS repeater_history (
+           id        INTEGER PRIMARY KEY AUTOINCREMENT,
+           tab_id    INTEGER NOT NULL,
+           sent_at   TEXT NOT NULL,
+           req_raw   TEXT NOT NULL,
+           resp_raw  TEXT,
+           status    INTEGER,
+           time_ms   INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS idx_repeater_history_tab ON repeater_history(tab_id, id);",
     )
     .map_err(|e| e.to_string())?;
     conn.execute(
@@ -418,9 +442,65 @@ impl Db {
 
     pub fn delete_repeater_tab(&self, id: i64) -> Result<(), String> {
         let conn = self.conn.lock();
+        conn.execute("DELETE FROM repeater_history WHERE tab_id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM repeater_tabs WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn insert_repeater_history(
+        &self,
+        tab_id: i64,
+        req_raw: &str,
+        resp_raw: Option<&str>,
+        status: Option<i64>,
+        time_ms: Option<i64>,
+    ) -> Result<i64, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO repeater_history (tab_id, sent_at, req_raw, resp_raw, status, time_ms)
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![tab_id, now, req_raw, resp_raw, status, time_ms],
+        )
+        .map_err(|e| e.to_string())?;
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "DELETE FROM repeater_history WHERE tab_id = ?1 AND id NOT IN
+             (SELECT id FROM repeater_history WHERE tab_id = ?1 ORDER BY id DESC LIMIT 100)",
+            params![tab_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub fn list_repeater_history(
+        &self,
+        tab_id: i64,
+        limit: usize,
+    ) -> Result<Vec<RepeaterHistoryEntry>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, tab_id, sent_at, req_raw, resp_raw, status, time_ms
+                 FROM repeater_history WHERE tab_id = ?1 ORDER BY id DESC LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![tab_id, limit as i64], |r| {
+                Ok(RepeaterHistoryEntry {
+                    id: r.get(0)?,
+                    tab_id: r.get(1)?,
+                    sent_at: r.get(2)?,
+                    req_raw: r.get(3)?,
+                    resp_raw: r.get(4)?,
+                    status: r.get(5)?,
+                    time_ms: r.get(6)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>, String> {
@@ -586,16 +666,17 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
-    pub fn list_ws_frames(&self, conn_id: i64) -> Result<Vec<WsFrame>, String> {
+    /// Newest `limit` frames for a connection, returned oldest-first.
+    pub fn list_ws_frames(&self, conn_id: i64, limit: usize) -> Result<Vec<WsFrame>, String> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, conn_id, ts, dir, opcode, len, payload
-                 FROM ws_frames WHERE conn_id = ?1 ORDER BY id",
+                 FROM ws_frames WHERE conn_id = ?1 ORDER BY id DESC LIMIT ?2",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![conn_id], |r| {
+            .query_map(params![conn_id, limit.max(1) as i64], |r| {
                 Ok(WsFrame {
                     id: r.get(0)?,
                     conn_id: r.get(1)?,
@@ -607,7 +688,11 @@ impl Db {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        let mut frames: Vec<WsFrame> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        frames.reverse();
+        Ok(frames)
     }
 }
 
@@ -727,4 +812,72 @@ pub fn fix_content_length(raw: &str) -> String {
     out.push_str("\r\n\r\n");
     out.push_str(body);
     out
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db(tag: &str) -> Arc<Db> {
+        let path = std::env::temp_dir().join(format!(
+            "wt-db-test-{}-{}.db",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        open(&path).expect("open temp db")
+    }
+
+    #[test]
+    fn repeater_history_prunes_to_100_newest_first() {
+        let db = temp_db("hist");
+        let tab = db
+            .save_repeater_tab("t", "GET / HTTP/1.1", None, None, None, 0)
+            .unwrap();
+        for i in 0..105 {
+            db.insert_repeater_history(
+                tab,
+                &format!("GET /{i} HTTP/1.1"),
+                None,
+                Some(200),
+                Some(i),
+            )
+            .unwrap();
+        }
+        let rows = db.list_repeater_history(tab, 100).unwrap();
+        assert_eq!(rows.len(), 100);
+        assert_eq!(rows[0].req_raw, "GET /104 HTTP/1.1");
+        assert_eq!(rows[99].req_raw, "GET /5 HTTP/1.1");
+    }
+
+    #[test]
+    fn repeater_history_cascades_on_tab_delete() {
+        let db = temp_db("cascade");
+        let tab = db
+            .save_repeater_tab("t", "GET / HTTP/1.1", None, None, None, 0)
+            .unwrap();
+        db.insert_repeater_history(tab, "GET /a", None, Some(200), Some(1))
+            .unwrap();
+        assert_eq!(db.list_repeater_history(tab, 100).unwrap().len(), 1);
+        db.delete_repeater_tab(tab).unwrap();
+        assert!(db.list_repeater_history(tab, 100).unwrap().is_empty());
+        assert!(db.list_repeater_tabs().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ws_frames_limit_keeps_newest_in_original_order() {
+        let db = temp_db("wsframes");
+        let conn = db
+            .insert_ws_conn("wss://example.com/ws", "example.com", 443, true)
+            .unwrap();
+        for i in 0..5 {
+            db.insert_ws_frame(conn, "out", 1, i, &format!("p{i}")).unwrap();
+        }
+        let rows = db.list_ws_frames(conn, 3).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter().map(|f| f.payload.as_str()).collect::<Vec<_>>(),
+            vec!["p2", "p3", "p4"]
+        );
+        assert!(db.list_ws_frames(conn, 500).unwrap().len() == 5);
+    }
 }

@@ -32,7 +32,13 @@ function fmtTs(ts: string): string {
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString();
 }
 
-export default function LogTable({ limit = 200 }: { limit?: number }) {
+export default function LogTable({
+  limit = 200,
+  focus = null,
+}: {
+  limit?: number;
+  focus?: { id: number; seq: number } | null;
+}) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [toolF, setToolF] = useState("");
   const [levelF, setLevelF] = useState("");
@@ -59,6 +65,13 @@ export default function LogTable({ limit = 200 }: { limit?: number }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Bring a search-jumped-to entry into view once it has loaded.
+  useEffect(() => {
+    if (!focus) return;
+    const el = document.querySelector(`tr[data-log-id="${focus.id}"]`);
+    if (el instanceof HTMLElement) el.scrollIntoView({ block: "center" });
+  }, [focus, entries]);
 
   useEffect(() => {
     const un = listen<LogEntry>("log-added", (ev) => {
@@ -150,7 +163,11 @@ export default function LogTable({ limit = 200 }: { limit?: number }) {
             </thead>
             <tbody>
               {entries.map((e) => (
-                <tr key={e.id}>
+                <tr
+                  key={e.id}
+                  data-log-id={e.id}
+                  className={focus?.id === e.id ? "focused" : ""}
+                >
                   <td>{fmtTs(e.ts)}</td>
                   <td>{e.tool}</td>
                   <td>

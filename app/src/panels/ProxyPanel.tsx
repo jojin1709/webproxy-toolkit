@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   HeldInfo,
   HttpExchange,
@@ -8,6 +9,8 @@ import {
   ProxyStatus,
   ScopeRule,
   statusClass,
+  WsConn,
+  WsFrame,
 } from "../types";
 import { useContextMenu, MenuItem } from "../components/ContextMenu";
 import MessageView from "../components/MessageView";
@@ -20,6 +23,7 @@ type Props = {
   setStatus: (s: ProxyStatus) => void;
   setToast: (t: string) => void;
   sendTo: (tool: SendTool, msg: { raw: string; url: string; response?: string }) => void;
+  jumpTo?: { exId: number; seq: number } | null;
 };
 
 type Sub = "intercept" | "history" | "ws" | "options";
@@ -50,6 +54,46 @@ function timeOf(iso: string): string {
   return t || iso;
 }
 
+const WS_OPCODES: [number, string][] = [
+  [0, "continuation"],
+  [1, "text"],
+  [2, "binary"],
+  [8, "close"],
+  [9, "ping"],
+  [10, "pong"],
+];
+
+function wsOpcodeName(op: number): string {
+  return WS_OPCODES.find(([n]) => n === op)?.[1] ?? `op${op}`;
+}
+
+function wsDirLabel(dir: string): string {
+  return dir === "c" ? "→ sent" : dir === "s" ? "← received" : dir;
+}
+
+function wsFrameText(f: WsFrame): string {
+  const head = `${wsDirLabel(f.dir)} · ${wsOpcodeName(f.opcode)} frame · ${f.len} bytes · ${timeOf(f.ts)}`;
+  const body = f.payload.length ? f.payload : "(no payload)";
+  return `${head}\n\n${body}`;
+}
+
+function wsHandshake(c: WsConn): string {
+  let target = c.url;
+  try {
+    const u = new URL(c.url);
+    target = `${u.pathname}${u.search}`;
+  } catch {
+    /* keep the raw URL when it is not parseable */
+  }
+  return (
+    `GET ${target} HTTP/1.1\r\n` +
+    `Host: ${c.host}${c.port === 80 || c.port === 443 ? "" : `:${c.port}`}\r\n` +
+    `Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n` +
+    `Sec-WebSocket-Key: <redacted>\r\n\r\n` +
+    `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket`
+  );
+}
+
 function rawRequest(ex: HttpExchange): string {
   return (
     `${ex.method} ${ex.url} HTTP/1.1\r\n` +
@@ -68,7 +112,7 @@ function rawResponse(ex: HttpExchange): string {
   );
 }
 
-export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Props) {
+export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo }: Props) {
   const [sub, setSub] = useState<Sub>("history");
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(status.port || 8080);
@@ -88,7 +132,13 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
     replace_val: "",
     comment: "",
   });
-  const { open: openCtx, node: ctxNode } = useContextMenu();
+  const { open: openCtx, close: closeCtx, node: ctxNode, isOpen: menuOpen } = useContextMenu();
+  const [wsConns, setWsConns] = useState<WsConn[]>([]);
+  const [wsSel, setWsSel] = useState<WsConn | null>(null);
+  const [wsFrames, setWsFrames] = useState<WsFrame[]>([]);
+  const [wsFrameSel, setWsFrameSel] = useState<WsFrame | null>(null);
+  const [wsShowHs, setWsShowHs] = useState(false);
+  const wsSelIdRef = useRef<number | null>(null);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -116,6 +166,94 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
         .catch(() => {});
     }
   }, [sub, status.history_count, setToast]);
+
+  const wsConnsSeq = useRef(0);
+  const loadWs = useCallback(async () => {
+    const seq = ++wsConnsSeq.current;
+    try {
+      const conns = await invoke<WsConn[]>("ws_conns_list", { limit: 200 });
+      if (seq !== wsConnsSeq.current) return;
+      setWsConns(conns);
+      setWsSel((prev) => (prev ? (conns.find((c) => c.id === prev.id) ?? null) : null));
+    } catch (e) {
+      if (seq === wsConnsSeq.current) setToast(String(e));
+    }
+  }, [setToast]);
+
+  const wsSeq = useRef(0);
+
+  useEffect(() => {
+    if (sub !== "ws") return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    let timer = 0;
+    // Frame traffic arrives in bursts: coalesce into one refresh per 250ms.
+    const scheduleRefresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        loadWs();
+        const id = wsSelIdRef.current;
+        if (id) loadFrames(id);
+      }, 250);
+    };
+    loadWs();
+    listen("ws-updated", scheduleRefresh)
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub, loadWs]);
+
+  async function loadFrames(connId: number) {
+    const seq = ++wsSeq.current;
+    try {
+      const frames = await invoke<WsFrame[]>("ws_frames_list", { connId, limit: 500 });
+      if (seq !== wsSeq.current) return;
+      setWsFrames(frames);
+      setWsFrameSel((prev) => (prev ? (frames.find((f) => f.id === prev.id) ?? null) : null));
+    } catch (e) {
+      if (seq === wsSeq.current) setToast(String(e));
+    }
+  }
+
+  useEffect(() => {
+    wsSelIdRef.current = wsSel?.id ?? null;
+    if (!wsSel) {
+      setWsFrames([]);
+      setWsFrameSel(null);
+      return;
+    }
+    setWsShowHs(false);
+    loadFrames(wsSel.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsSel?.id]);
+
+  useEffect(() => {
+    if (!jumpTo) return;
+    setSub("history");
+    // The jumped-to row must actually be visible: drop any filter hiding it.
+    setFilter("");
+    setScopeOnly(false);
+    invoke<HttpExchange | null>("history_get", { id: jumpTo.exId })
+      .then((ex) => {
+        if (!ex) {
+          setToast("That request is no longer in history");
+          return;
+        }
+        setSelected(ex);
+        setHistory((prev) => (prev.some((p) => p.id === ex.id) ? prev : [ex, ...prev]));
+      })
+      .catch((e) => setToast(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo]);
 
   // poll held message while interception is armed
   useEffect(() => {
@@ -254,9 +392,63 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
       { label: "Do an active scan", disabled: true, hint: "Phase 4" },
       { label: ex.in_scope ? "Remove from scope" : "Add to scope", onClick: ex.in_scope ? removeScope : addScope },
       { sep: true },
-      { label: "Copy URL", onClick: () => navigator.clipboard.writeText(ex.url).then(() => setToast("URL copied")) },
-      { label: "Copy request", onClick: () => navigator.clipboard.writeText(rawRequest(ex)).then(() => setToast("Request copied")) },
+      { label: "Copy URL", onClick: () => copyText(ex.url, "URL") },
+      { label: "Copy request", onClick: () => copyText(rawRequest(ex), "Request") },
     ];
+  }
+
+  function copyText(text: string, label: string) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => setToast(`${label} copied`))
+      .catch(() => setToast(`Could not copy ${label.toLowerCase()} — clipboard unavailable`));
+  }
+
+  function heldRawUrl(): string {
+    if (!held) return "";
+    const firstLine = heldEdit.split(/\r?\n/)[0] ?? "";
+    const target = firstLine.split(" ")[1] ?? "/";
+    if (/^https?:\/\//.test(target)) return target;
+    const proto = held.tls ? "https" : "http";
+    const defaultPort = (held.tls && held.port === 443) || (!held.tls && held.port === 80);
+    return `${proto}://${held.host}${defaultPort ? "" : `:${held.port}`}${target}`;
+  }
+
+  function actionMenu(e: React.MouseEvent<HTMLButtonElement>) {
+    if (menuOpen) {
+      closeCtx();
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    // Always anchor to the button itself so the menu never covers it.
+    const anchor = { x: rect.left, y: rect.bottom + 4 };
+    const armed = status.intercept || status.intercept_resp;
+    openCtx(e, [
+      { label: "Forward", hint: "Enter", disabled: !held, onClick: forwardHeld },
+      { label: "Drop", disabled: !held, onClick: dropHeld },
+      { sep: true },
+      {
+        label: armed ? "Turn interception off" : "Turn interception on",
+        onClick: toggleIntercept,
+      },
+      {
+        label: status.intercept_resp ? "Stop intercepting responses" : "Intercept responses too",
+        onClick: toggleInterceptResp,
+      },
+      { sep: true },
+      {
+        label: "Open in Repeater",
+        disabled: !held,
+        onClick: () => held && sendTo("repeater", { raw: heldEdit, url: heldRawUrl() }),
+      },
+      {
+        label: "Copy held message",
+        disabled: !held,
+        onClick: () => copyText(heldEdit, "Held message"),
+      },
+      { sep: true },
+      { label: "Do an active scan", disabled: true, hint: "Phase 4" },
+    ], anchor);
   }
 
   async function addRule() {
@@ -283,7 +475,7 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
   const SUBS: [Sub, string, string?][] = [
     ["intercept", "Intercept"],
     ["history", "HTTP history"],
-    ["ws", "WebSockets history", "Phase 2"],
+    ["ws", "WebSockets history"],
     ["options", "Options"],
   ];
 
@@ -335,7 +527,14 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
             <button className="btn danger" disabled={!held} onClick={dropHeld}>
               Drop
             </button>
-            <button className="btn" disabled title="Phase 2: follow-up actions">
+            <button
+              className="btn"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="Action"
+              title="Action — follow-up options for the held message"
+              onClick={actionMenu}
+            >
               Action ▾
             </button>
           </div>
@@ -482,7 +681,7 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
                     ))}
                     {visible.length === 0 && (
                       <tr>
-                        <td colSpan={11} className="muted">
+                        <td colSpan={11} className="muted empty-cell">
                           {history.length === 0
                             ? "No traffic yet. Start the proxy, then browse through it."
                             : "No rows match the filter."}
@@ -550,7 +749,177 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo }: Prop
       )}
 
       {sub === "ws" && (
-        <div className="empty">WebSocket history arrives in Phase 2.</div>
+        <div className="panel grow min-h-0">
+          <SplitPane direction="column" initial={42} min={20} max={80}>
+            <>
+              <div
+                className="table-wrap"
+                role="region"
+                aria-label="WebSocket connections"
+                tabIndex={0}
+              >
+                <table className="history">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Started</th>
+                      <th>Host</th>
+                      <th>URL</th>
+                      <th>TLS</th>
+                      <th>Sent</th>
+                      <th>Received</th>
+                      <th>State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wsConns.map((c) => (
+                      <tr
+                        key={c.id}
+                        className={wsSel?.id === c.id ? "selected" : ""}
+                        tabIndex={0}
+                        aria-selected={wsSel?.id === c.id}
+                        onClick={() => setWsSel(c)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setWsSel(c);
+                          }
+                        }}
+                      >
+                        <td>{c.id}</td>
+                        <td>{timeOf(c.ts_start)}</td>
+                        <td title={c.host}>{c.host}</td>
+                        <td title={c.url}>{c.url}</td>
+                        <td>{c.tls ? "TLS" : ""}</td>
+                        <td>{c.msgs_out}</td>
+                        <td>{c.msgs_in}</td>
+                        <td>
+                          {c.ts_end ? (
+                            <span className="muted">closed</span>
+                          ) : (
+                            <span className="m-post">open</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {wsConns.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="muted empty-cell">
+                          No WebSocket connections captured yet. Browse to a site that uses
+                          WebSockets, then refresh.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="filterbar">
+                <span className="muted">{wsConns.length} connection(s)</span>
+                <span className="grow" />
+                <button className="btn" onClick={loadWs} title="Reload connections">
+                  Refresh
+                </button>
+              </div>
+            </>
+            <>
+              {wsSel ? (
+                <SplitPane direction="row" initial={55} min={20} max={80}>
+                  <div className="pane-flush">
+                    <div className="pane-caption">
+                      Frames
+                      <span className="grow" />
+                      <button
+                        className={`btn mini ${wsShowHs ? "primary" : ""}`}
+                        aria-pressed={wsShowHs}
+                        onClick={() => setWsShowHs((v) => !v)}
+                        title="Show the reconstructed HTTP upgrade handshake"
+                      >
+                        Handshake
+                      </button>
+                      <span className="muted">
+                        {wsFrames.length >= 500 ? "newest 500 frames" : `${wsFrames.length} frames`}
+                      </span>
+                    </div>
+                    <div
+                      className="grow min-h-0 table-wrap"
+                      role="region"
+                      aria-label="WebSocket frames"
+                      tabIndex={0}
+                    >
+                      <table className="history">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Time</th>
+                            <th>Dir</th>
+                            <th>Type</th>
+                            <th>Length</th>
+                            <th>Payload</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wsFrames.map((f) => (
+                            <tr
+                              key={f.id}
+                              className={!wsShowHs && wsFrameSel?.id === f.id ? "selected" : ""}
+                              tabIndex={0}
+                              aria-selected={!wsShowHs && wsFrameSel?.id === f.id}
+                              onClick={() => {
+                                setWsShowHs(false);
+                                setWsFrameSel(f);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  setWsShowHs(false);
+                                  setWsFrameSel(f);
+                                }
+                              }}
+                            >
+                              <td>{f.id}</td>
+                              <td>{timeOf(f.ts)}</td>
+                              <td className={f.dir === "c" ? "m-post" : "m-get"}>
+                                {wsDirLabel(f.dir)}
+                              </td>
+                              <td>{wsOpcodeName(f.opcode)}</td>
+                              <td>{f.len}</td>
+                              <td className="mono" title={f.payload}>
+                                {f.payload.length > 80 ? `${f.payload.slice(0, 80)}…` : f.payload}
+                              </td>
+                            </tr>
+                          ))}
+                          {wsFrames.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="muted empty-cell">
+                                No frames captured on this connection yet.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="pane-flush">
+                    <div className="pane-caption">
+                      {wsShowHs ? "Handshake (reconstructed)" : "Message"}
+                    </div>
+                    <div className="grow min-h-0">
+                      {wsShowHs ? (
+                        <MessageView value={wsHandshake(wsSel)} />
+                      ) : wsFrameSel ? (
+                        <MessageView value={wsFrameText(wsFrameSel)} />
+                      ) : (
+                        <div className="empty">Select a frame to inspect it.</div>
+                      )}
+                    </div>
+                  </div>
+                </SplitPane>
+              ) : (
+                <div className="empty">Select a WebSocket connection to inspect its frames.</div>
+              )}
+            </>
+          </SplitPane>
+        </div>
       )}
 
       {sub === "options" && (

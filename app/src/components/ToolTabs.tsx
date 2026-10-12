@@ -48,7 +48,12 @@ export default function ToolTabs({ tab, setTab, onSearch, onSettings }: Props) {
         ))}
       </div>
       <div className="tools-right">
-        <button className="icon-btn" title="Search (Phase 2)" disabled onClick={onSearch}>
+        <button
+          className="icon-btn"
+          title="Search — history and log (Ctrl+Shift+F)"
+          aria-label="Search"
+          onClick={onSearch}
+        >
           <Search size={16} />
         </button>
         <button

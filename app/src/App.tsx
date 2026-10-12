@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./index.css";
 import MenuBar from "./components/MenuBar";
 import ToolTabs from "./components/ToolTabs";
+import SearchDialog from "./components/SearchDialog";
 import Placeholder from "./components/Placeholder";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProxyPanel from "./panels/ProxyPanel";
@@ -15,7 +16,7 @@ import DashboardPanel from "./panels/DashboardPanel";
 import ComparerPanel from "./panels/ComparerPanel";
 import SequencerPanel from "./panels/SequencerPanel";
 import LoggerPanel from "./panels/LoggerPanel";
-import { emptyStatus, ProxyStatus, TabId, Transfer } from "./types";
+import { emptyStatus, ProxyStatus, SearchHit, TabId, Transfer } from "./types";
 
 export type SendTool = "repeater" | "intruder" | "decoder" | "comparer";
 
@@ -27,6 +28,9 @@ export default function App() {
   const [toIntruder, setToIntruder] = useState<Transfer | null>(null);
   const [toDecoder, setToDecoder] = useState<Transfer | null>(null);
   const [toComparer, setToComparer] = useState<Transfer[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [jump, setJump] = useState<{ exId: number; seq: number } | null>(null);
+  const [logFocus, setLogFocus] = useState<{ id: number; seq: number } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -51,6 +55,29 @@ export default function App() {
     const id = window.setTimeout(() => setToast(""), 5000);
     return () => window.clearTimeout(id);
   }, [toast]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function jumpToHit(hit: SearchHit) {
+    if (hit.source === "history") {
+      setJump({ exId: hit.id, seq: Date.now() });
+      setTab("proxy");
+      setToast(`Opened request #${hit.id} in Proxy history`);
+    } else {
+      setLogFocus({ id: hit.id, seq: Date.now() });
+      setTab("logger");
+      setToast(`Opened log entry #${hit.id} in Logger`);
+    }
+  }
 
   function sendTo(tool: SendTool, msg: { raw: string; url: string; response?: string }) {
     const t: Transfer = { ...msg, seq: Date.now() };
@@ -112,10 +139,12 @@ export default function App() {
         <ToolTabs
           tab={tab}
           setTab={setTab}
-          onSearch={() => setToast("Global search arrives in Phase 2")}
+          onSearch={() => setSearchOpen(true)}
           onSettings={() => setTab("settings")}
         />
       </header>
+
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} onJump={jumpToHit} />
 
       <main className="main">
         <ErrorBoundary key={tab}>
@@ -125,6 +154,7 @@ export default function App() {
               setStatus={setStatus}
               setToast={setToast}
               sendTo={sendTo}
+              jumpTo={jump}
             />
           )}
           {tab === "repeater" && <RepeaterPanel incoming={toRepeater} setToast={setToast} />}
@@ -154,7 +184,7 @@ export default function App() {
               description="The JavaScript plugin API — HTTP handlers, custom tabs, context-menu items, editor decorations — arrives in Phase 6."
             />
           )}
-          {tab === "logger" && <LoggerPanel />}
+          {tab === "logger" && <LoggerPanel focus={logFocus} />}
           {tab === "collaborator" && (
             <Placeholder
               id="panel-collaborator"

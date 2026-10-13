@@ -989,6 +989,22 @@ pub fn register(
             intruder_results_list,
             intruder_result_get,
             intruder_results_clear,
+            checks_list,
+            issues_list,
+            issues_get,
+            issues_update_status,
+            issues_delete,
+            issues_counts,
+            scan_start,
+            scan_cancel,
+            scan_pause,
+            scan_resume,
+            scan_tasks_list,
+            scan_state,
+            scan_config_list,
+            scan_config_get,
+            scan_config_save,
+            scan_config_delete,
         ])
 }
 
@@ -1429,6 +1445,284 @@ pub fn intruder_results_clear(
         return Err("stop the attack before clearing results".into());
     }
     db_of(&state)?.clear_intruder_results(campaign_id)
+}
+
+// ---------------------------------------------------------------- Scanner
+
+#[derive(serde::Serialize, Clone)]
+pub struct CheckInfo {
+    pub id: String,
+    pub name: String,
+    pub kind: String, // passive | active
+    pub severity: String,
+    pub description: String,
+    pub remediation: String,
+}
+
+/// Issue definitions catalog (passive + active checks).
+#[tauri::command]
+pub fn checks_list() -> Vec<CheckInfo> {
+    crate::scanner::CHECKS
+        .iter()
+        .map(|c| CheckInfo {
+            id: c.id.to_string(),
+            name: c.name.to_string(),
+            kind: match c.kind {
+                crate::scanner::CheckKind::Passive => "passive".into(),
+                crate::scanner::CheckKind::Active => "active".into(),
+            },
+            severity: c.severity.to_string(),
+            description: c.description.to_string(),
+            remediation: c.remediation.to_string(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn issues_list(
+    state: State<'_, SharedProxy>,
+    severities: Option<Vec<String>>,
+    host: Option<String>,
+    status: Option<String>,
+    text: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let db = db_of(&state)?;
+    let rows = db.list_issues(
+        &severities.unwrap_or_default(),
+        host.as_deref().unwrap_or(""),
+        status.as_deref().unwrap_or(""),
+        text.as_deref().unwrap_or(""),
+        offset.unwrap_or(0).max(0),
+        limit.unwrap_or(500).clamp(1, 2000),
+    )?;
+    let total = rows.len(); // full scan is bounded by limit; counts come from issues_counts
+    Ok(serde_json::json!({ "rows": rows, "total": total }))
+}
+
+#[tauri::command]
+pub fn issues_get(
+    state: State<'_, SharedProxy>,
+    id: i64,
+) -> Result<Option<crate::db::Issue>, String> {
+    db_of(&state)?.get_issue(id)
+}
+
+#[tauri::command]
+pub fn issues_update_status(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    id: i64,
+    status: String,
+) -> Result<usize, String> {
+    if !["open", "acknowledged", "false-positive"].contains(&status.as_str()) {
+        return Err(format!("invalid issue status: {status}"));
+    }
+    let n = db_of(&state)?.update_issue_status(id, &status)?;
+    if n > 0 {
+        if let Ok(Some(issue)) = db_of(&state)?.get_issue(id) {
+            let _ = app.emit("issue-updated", issue);
+        }
+    }
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn issues_delete(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    id: i64,
+) -> Result<usize, String> {
+    let n = db_of(&state)?.delete_issue(id)?;
+    if n > 0 {
+        let _ = app.emit("issue-deleted", id);
+    }
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn issues_counts(state: State<'_, SharedProxy>) -> Result<serde_json::Value, String> {
+    let rows = db_of(&state)?.issues_counts()?;
+    let mut map = serde_json::Map::new();
+    for (sev, n) in rows {
+        map.insert(sev, serde_json::json!(n));
+    }
+    for sev in ["critical", "high", "medium", "low", "info"] {
+        map.entry(sev).or_insert(serde_json::json!(0));
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+// --------------------------------------------------------- scan tasks (4b)
+
+/// Start a crawl / audit / crawl-audit task against `target` (absolute http(s) URL).
+#[tauri::command]
+pub async fn scan_start(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    target: String,
+    kind: Option<String>,
+    config_id: Option<i64>,
+) -> Result<i64, String> {
+    let kind = kind.unwrap_or_else(|| "crawl-audit".into());
+    if !["crawl", "audit", "crawl-audit"].contains(&kind.as_str()) {
+        return Err(format!("invalid scan kind: {kind}"));
+    }
+    let u = url::Url::parse(&target).map_err(|e| format!("invalid target URL: {e}"))?;
+    if u.scheme() != "http" && u.scheme() != "https" {
+        return Err("target must be an http(s) URL".into());
+    }
+    let db = db_of(&state)?;
+    let task_id = db.insert_scan_task(&kind, &target, config_id)?;
+    let ctl = Arc::new(crate::scanner::ScanCtl::new());
+    state.scan_runs.lock().insert(task_id, ctl.clone());
+    let state2 = state.inner().clone();
+    let app2 = app.clone();
+    let kind2 = kind.clone();
+    let mut limits = crate::scanner::ScanLimits::default();
+    if let Some(cid) = config_id {
+        if let Some(cfg) = db.get_scan_config(cid)? {
+            limits.max_pages = cfg.crawl_max_pages.max(1) as usize;
+            limits.max_depth = cfg.crawl_max_depth.max(0) as usize;
+            limits.throttle_ms = cfg.throttle_ms.max(0) as u64;
+            limits.only_checks = if cfg.active_checks.is_empty() {
+                None
+            } else {
+                Some(cfg.active_checks)
+            };
+        }
+    }
+    tauri::async_runtime::spawn(async move {
+        crate::scanner::run_scan_task(Some(app2), state2, task_id, target, kind2, limits, ctl).await;
+    });
+    Ok(task_id)
+}
+
+#[tauri::command]
+pub fn scan_cancel(state: State<'_, SharedProxy>, task_id: i64) -> Result<(), String> {
+    match state.scan_runs.lock().get(&task_id) {
+        Some(ctl) => {
+            ctl.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        None => Err(format!("no running scan task {task_id}")),
+    }
+}
+
+#[tauri::command]
+pub fn scan_pause(state: State<'_, SharedProxy>, task_id: i64) -> Result<(), String> {
+    match state.scan_runs.lock().get(&task_id) {
+        Some(ctl) => {
+            ctl.pause();
+            Ok(())
+        }
+        None => Err(format!("no running scan task {task_id}")),
+    }
+}
+
+#[tauri::command]
+pub fn scan_resume(state: State<'_, SharedProxy>, task_id: i64) -> Result<(), String> {
+    match state.scan_runs.lock().get(&task_id) {
+        Some(ctl) => {
+            ctl.resume();
+            Ok(())
+        }
+        None => Err(format!("no running scan task {task_id}")),
+    }
+}
+
+#[tauri::command]
+pub fn scan_tasks_list(state: State<'_, SharedProxy>) -> Result<Vec<crate::db::ScanTask>, String> {
+    db_of(&state)?.list_scan_tasks()
+}
+
+/// Live state of running tasks (for the progress card).
+#[tauri::command]
+pub fn scan_state(state: State<'_, SharedProxy>) -> serde_json::Value {
+    let runs = state.scan_runs.lock();
+    let items: Vec<serde_json::Value> = runs
+        .iter()
+        .map(|(id, ctl)| {
+            serde_json::json!({
+                "task_id": id,
+                "pages": ctl.pages.load(std::sync::atomic::Ordering::SeqCst),
+                "requests": ctl.requests.load(std::sync::atomic::Ordering::SeqCst),
+                "issues": ctl.issues.load(std::sync::atomic::Ordering::SeqCst),
+                "paused": ctl.paused.load(std::sync::atomic::Ordering::SeqCst),
+                "elapsed_ms": ctl.started.elapsed().as_millis() as u64,
+            })
+        })
+        .collect();
+    serde_json::json!({ "running": items })
+}
+
+// -------------------------------------------------------- scan configs (4c)
+
+#[derive(serde::Deserialize)]
+pub struct ScanConfigInput {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub name: String,
+    pub passive_enabled: bool,
+    #[serde(default)]
+    pub active_checks: Vec<String>,
+    #[serde(default = "default_pages")]
+    pub crawl_max_pages: i64,
+    #[serde(default = "default_depth")]
+    pub crawl_max_depth: i64,
+    #[serde(default = "default_threads")]
+    pub audit_threads: i64,
+    #[serde(default = "default_throttle")]
+    pub throttle_ms: i64,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+fn default_pages() -> i64 { 50 }
+fn default_depth() -> i64 { 3 }
+fn default_threads() -> i64 { 4 }
+fn default_throttle() -> i64 { 50 }
+
+#[tauri::command]
+pub fn scan_config_list(state: State<'_, SharedProxy>) -> Result<Vec<crate::db::ScanConfig>, String> {
+    db_of(&state)?.list_scan_configs()
+}
+
+#[tauri::command]
+pub fn scan_config_get(state: State<'_, SharedProxy>, config_id: i64) -> Result<crate::db::ScanConfig, String> {
+    db_of(&state)?
+        .get_scan_config(config_id)?
+        .ok_or_else(|| format!("scan config {config_id} not found"))
+}
+
+#[tauri::command]
+pub fn scan_config_save(state: State<'_, SharedProxy>, config: ScanConfigInput) -> Result<i64, String> {
+    let name = config.name.trim();
+    if name.is_empty() {
+        return Err("config name is required".into());
+    }
+    db_of(&state)?.save_scan_config(
+        config.id,
+        name,
+        config.passive_enabled,
+        &config.active_checks,
+        config.crawl_max_pages.max(1),
+        config.crawl_max_depth.max(0),
+        config.audit_threads.max(1),
+        config.throttle_ms.max(0),
+        config.is_default,
+    )
+}
+
+#[tauri::command]
+pub fn scan_config_delete(state: State<'_, SharedProxy>, config_id: i64) -> Result<(), String> {
+    let n = db_of(&state)?.delete_scan_config(config_id)?;
+    if n == 0 {
+        Err(format!("scan config {config_id} not found"))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

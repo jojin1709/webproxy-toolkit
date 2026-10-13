@@ -126,6 +126,46 @@ def run():
         page.wait_for_timeout(2500)
         shot(page, "38-intruder-attack-done")
 
+        # ---- Phase 4a: Issues ----
+        tab(page, "Dashboard")
+        sub(page, "Issues")
+        stage[0] = "issues table"
+        irows = page.locator("#dash-issues .history tbody tr")
+        if irows.count() > 0:
+            irows.nth(0).click()
+            page.wait_for_timeout(400)
+        shot(page, "40-issues-table")
+        tab(page, "Target")
+        sub(page, "Issues")
+        stage[0] = "target issues"
+        trows = page.locator("#panel-target .history tbody tr")
+        if trows.count() > 0:
+            trows.nth(1).click()
+            page.wait_for_timeout(400)
+        shot(page, "41-target-issues")
+
+        # ---- Phase 4b: scan tasks ----
+        tab(page, "Dashboard")
+        sub(page, "Audit items")
+        stage[0] = "scan tasks table"
+        shot(page, "42-scan-tasks")
+        stage[0] = "new scan dialog"
+        page.get_by_role("button", name="New scan").first.click()
+        page.wait_for_timeout(300)
+        shot(page, "43-new-scan-dialog")
+        stage[0] = "scan config editor"
+        page.get_by_role("button", name="Edit config…").click()
+        page.wait_for_timeout(400)
+        shot(page, "44-scan-config")
+        page.locator(".dlg.wide button[aria-label='Close']").click()
+        page.wait_for_timeout(200)
+        page.locator(".dlg button").filter(has_text="Cancel").click()
+        page.wait_for_timeout(200)
+        stage[0] = "audit log scanner"
+        sub(page, "Audit log")
+        page.wait_for_timeout(400)
+        shot(page, "45-audit-log")
+
         # ---- Group A2: Phase 2a tools ----
         tab(page, "Proxy")
         stage[0] = "stage comparer 1"

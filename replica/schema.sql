@@ -130,3 +130,58 @@ CREATE TABLE IF NOT EXISTS intruder_results (
 );
 CREATE INDEX IF NOT EXISTS idx_intruder_results_campaign ON intruder_results(campaign_id, seq);
 CREATE INDEX IF NOT EXISTS idx_intruder_campaigns_updated ON intruder_campaigns(updated_at DESC);
+
+-- Scanner finding: one row per unique (check, host, path, param)
+CREATE TABLE IF NOT EXISTS issues (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_id     TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  severity     TEXT NOT NULL CHECK (severity IN ('info','low','medium','high','critical')),
+  confidence   TEXT NOT NULL CHECK (confidence IN ('tentative','firm','certain')),
+  host         TEXT NOT NULL DEFAULT '',
+  url          TEXT NOT NULL DEFAULT '',
+  method       TEXT NOT NULL DEFAULT '',
+  path         TEXT NOT NULL DEFAULT '',
+  param        TEXT NOT NULL DEFAULT '',
+  description  TEXT NOT NULL DEFAULT '',
+  remediation  TEXT NOT NULL DEFAULT '',
+  evidence     TEXT NOT NULL DEFAULT '',  -- short snippet proving the finding
+  exchange_id  INTEGER,                   -- exchanges.id when raised from proxy traffic
+  status       TEXT NOT NULL DEFAULT 'open'
+               CHECK (status IN ('open','acknowledged','false-positive')),
+  dedupe_key   TEXT NOT NULL UNIQUE,      -- check_id|host|path|param
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_issues_severity ON issues(severity);
+CREATE INDEX IF NOT EXISTS idx_issues_host     ON issues(host);
+CREATE INDEX IF NOT EXISTS idx_issues_created  ON issues(created_at DESC);
+
+-- scanner scan tasks (crawl / audit / crawl-audit)
+CREATE TABLE IF NOT EXISTS scan_tasks (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind            TEXT NOT NULL,            -- crawl|audit|crawl-audit
+  target          TEXT NOT NULL,
+  config_id       INTEGER,
+  status          TEXT NOT NULL DEFAULT 'running', -- running|paused|done|cancelled|error
+  pages_crawled   INTEGER NOT NULL DEFAULT 0,
+  requests_sent   INTEGER NOT NULL DEFAULT 0,
+  issues_found    INTEGER NOT NULL DEFAULT 0,
+  error           TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+
+-- scanner scan configs (reusable crawl/audit settings + enabled check ids)
+CREATE TABLE IF NOT EXISTS scan_configs (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  name             TEXT NOT NULL UNIQUE,
+  passive_enabled  INTEGER NOT NULL DEFAULT 1,
+  active_checks    TEXT NOT NULL DEFAULT '[]',   -- JSON check-id array; [] = all
+  crawl_max_pages  INTEGER NOT NULL DEFAULT 50,
+  crawl_max_depth  INTEGER NOT NULL DEFAULT 3,
+  audit_threads    INTEGER NOT NULL DEFAULT 4,
+  throttle_ms      INTEGER NOT NULL DEFAULT 50,
+  is_default       INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL
+);
+

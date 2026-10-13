@@ -57,6 +57,7 @@ pub struct ProxyState {
     pub match_replace: Mutex<Vec<MatchRule>>,
     pub app_handle: parking_lot::RwLock<Option<AppHandle>>,
     pub intruder_runs: crate::intruder::IntruderRuns,
+    pub scan_runs: crate::scanner::ScanRuns,
 }
 
 impl Default for ProxyState {
@@ -76,6 +77,7 @@ impl Default for ProxyState {
             match_replace: Mutex::new(Vec::new()),
             app_handle: parking_lot::RwLock::new(None),
             intruder_runs: crate::intruder::IntruderRuns::default(),
+            scan_runs: crate::scanner::ScanRuns::default(),
         }
     }
 }
@@ -85,6 +87,10 @@ pub fn hydrate(state: &SharedProxy, database: &Arc<Db>) {
     // crash recovery: attacks cannot survive a restart
     if let Err(e) = database.reset_intruder_running() {
         eprintln!("intruder status reset failed: {e}");
+    }
+    // crash recovery: running scan tasks cannot survive a restart
+    if let Err(e) = database.reset_scan_tasks_running() {
+        eprintln!("scan task status reset failed: {e}");
     }
     if let Ok(rules) = database.list_scope() {
         *state.scope.lock() = rules;
@@ -457,8 +463,14 @@ fn record_exchange(
     };
     if let Some(database) = state.db.read().clone() {
         let ex2 = ex.clone();
+        let scan = ex.in_scope && !ex.websocket;
+        let state2 = state.clone();
+        let app = state.app_handle.read().clone();
         tokio::spawn(async move {
             let _ = database.insert_exchange(&ex2);
+            if scan {
+                crate::scanner::passive_scan_and_record(app.as_ref(), &state2, &ex2);
+            }
         });
     }
     let mut h = state.history.lock();

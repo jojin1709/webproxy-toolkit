@@ -1681,6 +1681,124 @@ table.kv td:first-child {
   }
 }
 
+/* ── Generic dialog (scan start, etc.) ────────────────────────────────── */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.dlg {
+  width: min(420px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.dlg-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-weight: 600;
+}
+
+.dlg-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.dlg-body label {
+  font-size: var(--text-xs);
+  margin-bottom: calc(var(--space-1) * -1);
+}
+
+.dlg-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.dlg.wide {
+  width: min(640px, 94vw);
+  max-height: 82vh;
+}
+
+.dlg-body.scroll {
+  overflow-y: auto;
+}
+
+.cfg-checks {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.cfg-checks legend {
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.cfg-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.dlg input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+.cfg-check-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cfg-check-desc {
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.cfg-grid label {
+  display: block;
+  font-size: var(--text-xs);
+  margin-bottom: 2px;
+}
+
 /* ── Global search dialog ─────────────────────────────────────────────── */
 .searchdlg-overlay {
   position: fixed;
@@ -1990,4 +2108,112 @@ textarea.intruder-payloads:focus {
 
 .intruder-results td.ellipsis {
   max-width: 220px;
+}
+
+/* ---------- phase 4: scanner ---------- */
+
+.sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  color: #fff;
+  background: #565660;
+  cursor: default;
+}
+
+button.sev-chip {
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+button.sev-chip.on,
+button.sev-chip:hover {
+  border-color: currentColor;
+}
+
+button.sev-chip.crit { background: transparent; color: #f28b82; }
+button.sev-chip.high { background: transparent; color: #f5a86a; }
+button.sev-chip.med  { background: transparent; color: #8ab8e8; }
+button.sev-chip.low  { background: transparent; color: #93cd9e; }
+button.sev-chip.info { background: transparent; color: #b9b9c4; }
+
+button.sev-chip.crit.on { background: #8c1d17; color: #fff; border-color: transparent; }
+button.sev-chip.high.on { background: #a34a12; color: #fff; border-color: transparent; }
+button.sev-chip.med.on  { background: #1f5f9e; color: #fff; border-color: transparent; }
+button.sev-chip.low.on  { background: #2e6240; color: #fff; border-color: transparent; }
+button.sev-chip.info.on { background: #4a4a54; color: #fff; border-color: transparent; }
+
+.sev-chip.crit { background: #8c1d17; }
+.sev-chip.high { background: #a34a12; }
+.sev-chip.med  { background: #1f5f9e; }
+.sev-chip.low  { background: #2e6240; }
+.sev-chip.info { background: #4a4a54; }
+
+.issue-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+
+.issue-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.issue-detail-head h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.issue-detail h4 {
+  margin: 10px 0 2px;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.issue-detail p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.issue-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 14px;
+  margin: 6px 0 0;
+}
+
+.issue-meta dt {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.issue-meta dd {
+  margin: 0;
+}
+
+.issue-evidence {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--color-bg-raised, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

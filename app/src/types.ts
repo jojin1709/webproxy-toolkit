@@ -245,3 +245,83 @@ export type IntruderCampaignDetail = {
   payloads: IntruderPayloadSet[];
   state: IntruderRunState;
 };
+
+// ---------------------------------------------------------- Scanner (Phase 4)
+
+export type IssueSeverity = "info" | "low" | "medium" | "high" | "critical";
+export type IssueStatus = "open" | "acknowledged" | "false-positive";
+
+export type Issue = {
+  id: number;
+  check_id: string;
+  name: string;
+  severity: IssueSeverity;
+  confidence: "tentative" | "firm" | "certain";
+  host: string;
+  url: string;
+  method: string;
+  path: string;
+  param: string;
+  description: string;
+  remediation: string;
+  evidence: string;
+  exchange_id: number | null;
+  status: IssueStatus;
+  created_at: string;
+};
+
+export type IssueCounts = Record<IssueSeverity, number>;
+
+export type CheckInfo = {
+  id: string;
+  name: string;
+  kind: "passive" | "active";
+  severity: IssueSeverity;
+  description: string;
+  remediation: string;
+};
+
+export type IssueFilter = {
+  severities: IssueSeverity[];
+  host: string;
+  status: "" | IssueStatus;
+  text: string;
+};
+
+export type ScanKind = "crawl" | "audit" | "crawl-audit";
+
+export type ScanTask = {
+  id: number;
+  kind: ScanKind;
+  target: string;
+  config_id: number | null;
+  status: "running" | "paused" | "done" | "cancelled" | "error";
+  pages_crawled: number;
+  requests_sent: number;
+  issues_found: number;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScanProgress = {
+  task_id: number;
+  pages: number;
+  requests: number;
+  issues: number;
+  status: string;
+  queued?: number;
+};
+
+export type ScanConfig = {
+  id: number;
+  name: string;
+  passive_enabled: boolean;
+  active_checks: string[]; // empty = all
+  crawl_max_pages: number;
+  crawl_max_depth: number;
+  audit_threads: number;
+  throttle_ms: number;
+  is_default: boolean;
+  created_at: string;
+};

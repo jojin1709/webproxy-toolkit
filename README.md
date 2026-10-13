@@ -12,7 +12,7 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 | 2a | Comparer, Sequencer, Logger (+ Dashboard event log) | done |
 | 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | done |
 | 3 | Intruder (attack engine, positions, payload sets, results) | done |
-| 4 | Passive scanner, Issues view, active audit, crawling, scan configs | planned |
+| 4 | Passive scanner, Issues view, active audit, crawling, scan configs | done |
 | 6 | Extensions (embedded JS engine, Burp-like extension API) | planned |
 | 7 | Collaborator (local out-of-band interaction server) | planned |
 | 8 | Session handling & macros, upstream proxy, TLS options, multi-listener, shortcuts | planned |
@@ -25,9 +25,10 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 - **Intruder** — attack engine with §…§ positions (auto-detect / wrap selection), 4 attack types (sniper, battering ram, pitchfork, cluster bomb), up to 8 payload sets (simple list / numbers) with 14 payload processors (url/base64 encode+decode, md5/sha1/sha256, replace, prefix/suffix, upper/lower, trim, reverse), threads/delay/max-request resource pool, live results with payload combos, status codes, grep extractors and full request/response inspection.
 - **Comparer** — side-by-side line and word diffs of any two messages, differences table with prev/next navigation.
 - **Sequencer** — token randomness analysis: sampling from a live URL (cookie / header / regex) or pasted samples, entropy, chi-square uniformity, Monte Carlo π, byte-level per-position stats.
-- **Logger** — persistent event log (proxy, repeater, scope, system) with tool/level/text filters, also embedded in the Dashboard.
+- **Logger** — persistent event log (proxy, repeater, scope, scanner, system) with tool/level/text filters, also embedded in the Dashboard (Audit log tab filters to scanner).
 - **Decoder** — encode/decode transforms (URL, Base64, hex, …).
-- **Dashboard** — project summary, audit items, issues, event log.
+- **Scanner** — passive checks on every in-scope response (17 header/cookie/banner/info-leak checks), active audit engine that crawls a target and tests parameters (SQL injection, reflected XSS, path traversal, open redirect, sensitive files), issue framework with dedupe/severity/confidence, issue detail with linked exchange, named scan configs (limits, threads, throttle, enabled checks) with an issue-definitions catalog, and Dashboard scan tasks with live progress + pause/resume/cancel.
+- **Dashboard** — project summary, scan tasks (crawl/audit) with live progress, issues with severity counts, event log, scanner audit log.
 - **A11y & theme** — full keyboard navigation, ARIA roles, WCAG AA contrast, dark Burp-like theme, responsive down to ~1000 px.
 
 ![Proxy history](docs/screenshot-proxy-history.png)

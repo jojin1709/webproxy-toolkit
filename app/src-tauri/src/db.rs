@@ -149,6 +149,73 @@ pub struct NewIntruderResult {
     pub extracted: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct Issue {
+    pub id: i64,
+    pub check_id: String,
+    pub name: String,
+    pub severity: String,   // info | low | medium | high | critical
+    pub confidence: String, // tentative | firm | certain
+    pub host: String,
+    pub url: String,
+    pub method: String,
+    pub path: String,
+    pub param: String,
+    pub description: String,
+    pub remediation: String,
+    pub evidence: String,
+    pub exchange_id: Option<i64>,
+    pub status: String, // open | acknowledged | false-positive
+    pub created_at: String,
+}
+
+pub struct NewIssue {
+    pub check_id: String,
+    pub name: String,
+    pub severity: String,
+    pub confidence: String,
+    pub host: String,
+    pub url: String,
+    pub method: String,
+    pub path: String,
+    pub param: String,
+    pub description: String,
+    pub remediation: String,
+    pub evidence: String,
+    pub exchange_id: Option<i64>,
+}
+
+/// One scanner run (crawl / audit / crawl-audit).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScanTask {
+    pub id: i64,
+    pub kind: String,  // crawl | audit | crawl-audit
+    pub target: String,
+    pub config_id: Option<i64>,
+    pub status: String, // running | paused | done | cancelled | error
+    pub pages_crawled: i64,
+    pub requests_sent: i64,
+    pub issues_found: i64,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Reusable scanner configuration (crawl limits, enabled checks).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScanConfig {
+    pub id: i64,
+    pub name: String,
+    pub passive_enabled: bool,
+    pub active_checks: Vec<String>, // empty = all
+    pub crawl_max_pages: i64,
+    pub crawl_max_depth: i64,
+    pub audit_threads: i64,
+    pub throttle_ms: i64,
+    pub is_default: bool,
+    pub created_at: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     blob_dir: PathBuf,
@@ -208,6 +275,16 @@ pub fn open(project_path: &Path) -> Result<Arc<Db>, String> {
            time_ms   INTEGER
          );
          CREATE INDEX IF NOT EXISTS idx_repeater_history_tab ON repeater_history(tab_id, id);",
+    )
+    .map_err(|e| e.to_string())?;
+    // seed default scan config on first open (idempotent)
+    conn.execute(
+        "INSERT OR IGNORE INTO scan_configs
+           (name, passive_enabled, active_checks, crawl_max_pages, crawl_max_depth,
+            audit_threads, throttle_ms, is_default, created_at)
+         SELECT 'Crawl + audit', 1, '[]', 50, 3, 4, 50, 1, ?1
+         WHERE NOT EXISTS (SELECT 1 FROM scan_configs)",
+        params![chrono::Utc::now().to_rfc3339()],
     )
     .map_err(|e| e.to_string())?;
     conn.execute(
@@ -1094,6 +1171,395 @@ impl Db {
         )
         .map_err(|e| e.to_string())
     }
+
+    /// Insert a scanner finding. Dedupe on (check_id, host, path, param):
+    /// returns Some(new id) when inserted, None when an identical finding exists.
+    pub fn insert_issue(&self, n: &NewIssue) -> Result<Option<i64>, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let dedupe_key = format!(
+            "{}|{}|{}|{}",
+            n.check_id, n.host, n.path, n.param
+        );
+        let conn = self.conn.lock();
+        let changed = conn
+            .execute(
+                "INSERT OR IGNORE INTO issues
+                   (check_id, name, severity, confidence, host, url, method, path, param,
+                    description, remediation, evidence, exchange_id, status, dedupe_key, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'open',?14,?15)",
+                params![
+                    n.check_id,
+                    n.name,
+                    n.severity,
+                    n.confidence,
+                    n.host,
+                    n.url,
+                    n.method,
+                    n.path,
+                    n.param,
+                    n.description,
+                    n.remediation,
+                    n.evidence,
+                    n.exchange_id,
+                    dedupe_key,
+                    now
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        Ok(conn.last_insert_rowid().into())
+    }
+
+    /// Filtered issue list (newest first). `severities` empty = all; host/status/text empty = all.
+    pub fn list_issues(
+        &self,
+        severities: &[String],
+        host: &str,
+        status: &str,
+        text: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Issue>, String> {
+        let conn = self.conn.lock();
+        let mut sql = String::from(
+            "SELECT id, check_id, name, severity, confidence, host, url, method, path, param,
+                    description, remediation, evidence, exchange_id, status, created_at
+             FROM issues WHERE 1=1",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if !severities.is_empty() {
+            let holes = severities
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(" AND severity IN ({holes})"));
+            for s in severities {
+                args.push(Box::new(s.clone()));
+            }
+        }
+        if !host.is_empty() {
+            sql.push_str(&format!(" AND host = ?{}", args.len() + 1));
+            args.push(Box::new(host.to_string()));
+        }
+        if !status.is_empty() {
+            sql.push_str(&format!(" AND status = ?{}", args.len() + 1));
+            args.push(Box::new(status.to_string()));
+        }
+        if !text.is_empty() {
+            sql.push_str(&format!(
+                " AND (name LIKE ?{} OR url LIKE ?{} OR param LIKE ?{} OR evidence LIKE ?{})",
+                args.len() + 1,
+                args.len() + 2,
+                args.len() + 3,
+                args.len() + 4
+            ));
+            let pat = format!("%{text}%");
+            args.push(Box::new(pat.clone()));
+            args.push(Box::new(pat.clone()));
+            args.push(Box::new(pat.clone()));
+            args.push(Box::new(pat));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        args.push(Box::new(limit));
+        sql.push_str(" OFFSET ?");
+        args.push(Box::new(offset));
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args.iter().map(|b| b.as_ref())), row_to_issue)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_issue(&self, id: i64) -> Result<Option<Issue>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, check_id, name, severity, confidence, host, url, method, path, param,
+                    description, remediation, evidence, exchange_id, status, created_at
+             FROM issues WHERE id = ?1",
+            params![id],
+            row_to_issue,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn update_issue_status(&self, id: i64, status: &str) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE issues SET status = ?2 WHERE id = ?1",
+            params![id, status],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn delete_issue(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM issues WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+
+    /// Counts per severity for the dashboard badges (all statuses).
+    pub fn issues_counts(&self) -> Result<Vec<(String, i64)>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT severity, COUNT(*) FROM issues GROUP BY severity")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Open (not false-positive) issue ids for a host — used to link sitemap hosts.
+    pub fn count_issues_open(&self) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT COUNT(*) FROM issues WHERE status != 'false-positive'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    // ----------------------------------------------------------- scan tasks
+
+    pub fn insert_scan_task(
+        &self,
+        kind: &str,
+        target: &str,
+        config_id: Option<i64>,
+    ) -> Result<i64, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO scan_tasks (kind, target, config_id, status, created_at, updated_at)
+             VALUES (?1,?2,?3,'running',?4,?4)",
+            params![kind, target, config_id, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_scan_tasks(&self) -> Result<Vec<ScanTask>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, kind, target, config_id, status, pages_crawled, requests_sent,
+                        issues_found, error, created_at, updated_at
+                 FROM scan_tasks ORDER BY id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], row_to_scan_task)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_scan_task(&self, id: i64) -> Result<Option<ScanTask>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, kind, target, config_id, status, pages_crawled, requests_sent,
+                    issues_found, error, created_at, updated_at
+             FROM scan_tasks WHERE id = ?1",
+            params![id],
+            row_to_scan_task,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    /// Update counters / status for a running scan task.
+    pub fn update_scan_task(
+        &self,
+        id: i64,
+        status: &str,
+        pages_crawled: i64,
+        requests_sent: i64,
+        issues_found: i64,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE scan_tasks SET status=?2, pages_crawled=?3, requests_sent=?4,
+                    issues_found=?5, error=?6, updated_at=?7
+             WHERE id=?1",
+            params![id, status, pages_crawled, requests_sent, issues_found, error, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Crash recovery: any task still marked running is marked cancelled.
+    pub fn reset_scan_tasks_running(&self) -> Result<usize, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE scan_tasks SET status='cancelled', updated_at=?1 WHERE status IN ('running','paused')",
+            params![now],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    // ---------------------------------------------------------- scan configs
+
+    pub fn list_scan_configs(&self) -> Result<Vec<ScanConfig>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, passive_enabled, active_checks, crawl_max_pages,
+                        crawl_max_depth, audit_threads, throttle_ms, is_default, created_at
+                 FROM scan_configs ORDER BY is_default DESC, name",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], row_to_scan_config)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_scan_config(&self, id: i64) -> Result<Option<ScanConfig>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, name, passive_enabled, active_checks, crawl_max_pages,
+                    crawl_max_depth, audit_threads, throttle_ms, is_default, created_at
+             FROM scan_configs WHERE id = ?1",
+            params![id],
+            row_to_scan_config,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    /// Insert or update (by id); clears is_default on all others when is_default is true.
+    pub fn save_scan_config(
+        &self,
+        id: Option<i64>,
+        name: &str,
+        passive_enabled: bool,
+        active_checks: &[String],
+        crawl_max_pages: i64,
+        crawl_max_depth: i64,
+        audit_threads: i64,
+        throttle_ms: i64,
+        is_default: bool,
+    ) -> Result<i64, String> {
+        let checks_json = serde_json::to_string(active_checks).unwrap_or_else(|_| "[]".into());
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        if is_default {
+            conn.execute("UPDATE scan_configs SET is_default=0", [])
+                .map_err(|e| e.to_string())?;
+        }
+        let id = match id {
+            Some(existing) => {
+                conn.execute(
+                    "UPDATE scan_configs SET name=?2, passive_enabled=?3, active_checks=?4,
+                            crawl_max_pages=?5, crawl_max_depth=?6, audit_threads=?7,
+                            throttle_ms=?8, is_default=?9
+                     WHERE id=?1",
+                    params![
+                        existing,
+                        name,
+                        passive_enabled,
+                        checks_json,
+                        crawl_max_pages,
+                        crawl_max_depth,
+                        audit_threads,
+                        throttle_ms,
+                        is_default
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                existing
+            }
+            None => {
+                conn.execute(
+                    "INSERT INTO scan_configs
+                       (name, passive_enabled, active_checks, crawl_max_pages, crawl_max_depth,
+                        audit_threads, throttle_ms, is_default, created_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    params![
+                        name,
+                        passive_enabled,
+                        checks_json,
+                        crawl_max_pages,
+                        crawl_max_depth,
+                        audit_threads,
+                        throttle_ms,
+                        is_default,
+                        now
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                conn.last_insert_rowid()
+            }
+        };
+        Ok(id)
+    }
+
+    pub fn delete_scan_config(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM scan_configs WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn row_to_scan_config(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScanConfig> {
+    let checks_json: String = r.get(3)?;
+    Ok(ScanConfig {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        passive_enabled: r.get::<_, i64>(2)? != 0,
+        active_checks: serde_json::from_str(&checks_json).unwrap_or_default(),
+        crawl_max_pages: r.get(4)?,
+        crawl_max_depth: r.get(5)?,
+        audit_threads: r.get(6)?,
+        throttle_ms: r.get(7)?,
+        is_default: r.get::<_, i64>(8)? != 0,
+        created_at: r.get(9)?,
+    })
+}
+
+fn row_to_scan_task(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScanTask> {
+    Ok(ScanTask {
+        id: r.get(0)?,
+        kind: r.get(1)?,
+        target: r.get(2)?,
+        config_id: r.get(3)?,
+        status: r.get(4)?,
+        pages_crawled: r.get(5)?,
+        requests_sent: r.get(6)?,
+        issues_found: r.get(7)?,
+        error: r.get(8)?,
+        created_at: r.get(9)?,
+        updated_at: r.get(10)?,
+    })
+}
+
+fn row_to_issue(r: &rusqlite::Row<'_>) -> rusqlite::Result<Issue> {
+    Ok(Issue {
+        id: r.get(0)?,
+        check_id: r.get(1)?,
+        name: r.get(2)?,
+        severity: r.get(3)?,
+        confidence: r.get(4)?,
+        host: r.get(5)?,
+        url: r.get(6)?,
+        method: r.get(7)?,
+        path: r.get(8)?,
+        param: r.get(9)?,
+        description: r.get(10)?,
+        remediation: r.get(11)?,
+        evidence: r.get(12)?,
+        exchange_id: r.get(13)?,
+        status: r.get(14)?,
+        created_at: r.get(15)?,
+    })
 }
 
 pub fn scope_matches(rule: &ScopeRule, host: &str, url: &str) -> bool {
@@ -1407,5 +1873,175 @@ mod tests {
         db.delete_intruder_campaign(id).unwrap();
         assert_eq!(db.count_intruder_results(id).unwrap(), 0);
         assert!(db.list_intruder_payload_sets(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn issue_insert_dedupes_and_returns_none_for_duplicate() {
+        let db = temp_db("issdedupe");
+        let mk = |param: &str| NewIssue {
+            check_id: "missing-csp".into(),
+            name: "Missing CSP".into(),
+            severity: "info".into(),
+            confidence: "certain".into(),
+            host: "shop.test".into(),
+            url: "https://shop.test/".into(),
+            method: "GET".into(),
+            path: "/".into(),
+            param: param.into(),
+            description: "desc".into(),
+            remediation: "fix".into(),
+            evidence: "no header".into(),
+            exchange_id: None,
+        };
+        let id1 = db.insert_issue(&mk("")).unwrap();
+        assert!(id1.is_some());
+        // same check/host/path/param → deduped
+        assert!(db.insert_issue(&mk("")).unwrap().is_none());
+        // different param → new issue
+        assert!(db.insert_issue(&mk("q")).unwrap().is_some());
+        assert_eq!(db.issues_counts().unwrap(), vec![("info".to_string(), 2)]);
+    }
+
+    #[test]
+    fn issue_list_filters_status_delete_and_counts() {
+        let db = temp_db("isslist");
+        let mk = |check: &str, sev: &str, host: &str, param: &str| NewIssue {
+            check_id: check.into(),
+            name: format!("{check} on {host}"),
+            severity: sev.into(),
+            confidence: "firm".into(),
+            host: host.into(),
+            url: format!("https://{host}/x"),
+            method: "GET".into(),
+            path: "/x".into(),
+            param: param.into(),
+            description: "d".into(),
+            remediation: "r".into(),
+            evidence: format!("ev-{check}"),
+            exchange_id: Some(7),
+        };
+        let a = db
+            .insert_issue(&mk("cookie-no-httponly", "medium", "a.test", ""))
+            .unwrap()
+            .unwrap();
+        db.insert_issue(&mk("missing-csp", "info", "b.test", ""))
+            .unwrap();
+        db.insert_issue(&mk("sql-error-leak", "high", "a.test", "id"))
+            .unwrap();
+
+        // severity filter
+        let high = vec!["high".to_string()];
+        let rows = db.list_issues(&high, "", "", "", 0, 100).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].check_id, "sql-error-leak");
+        assert_eq!(rows[0].exchange_id, Some(7));
+
+        // host + text filter
+        let rows = db.list_issues(&[], "a.test", "", "", 0, 100).unwrap();
+        assert_eq!(rows.len(), 2);
+        let rows = db.list_issues(&[], "", "", "httponly", 0, 100).unwrap();
+        assert_eq!(rows.len(), 1);
+
+        // status update + filter
+        db.update_issue_status(a, "false-positive").unwrap();
+        let open = db.list_issues(&[], "", "open", "", 0, 100).unwrap();
+        assert_eq!(open.len(), 2);
+        let fp = db.list_issues(&[], "", "false-positive", "", 0, 100).unwrap();
+        assert_eq!(fp.len(), 1);
+        assert_eq!(db.count_issues_open().unwrap(), 2);
+
+        // paging newest first + get + delete
+        let page = db.list_issues(&[], "", "", "", 0, 1).unwrap();
+        assert_eq!(page.len(), 1);
+        let got = db.get_issue(page[0].id).unwrap().expect("issue");
+        assert_eq!(got.evidence, format!("ev-{}", got.check_id));
+        assert!(db.get_issue(9999).unwrap().is_none());
+        assert_eq!(db.delete_issue(page[0].id).unwrap(), 1);
+    }
+
+    #[test]
+    fn scan_task_insert_list_update_reset() {
+        let db = temp_db("scan_task");
+        let id = db
+            .insert_scan_task("crawl-audit", "https://app.test/", None)
+            .unwrap();
+        assert!(id > 0);
+
+        let tasks = db.list_scan_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, id);
+        assert_eq!(tasks[0].kind, "crawl-audit");
+        assert_eq!(tasks[0].status, "running");
+        assert_eq!(tasks[0].pages_crawled, 0);
+
+        db.update_scan_task(id, "running", 12, 34, 3, None).unwrap();
+        let t = db.get_scan_task(id).unwrap().expect("task");
+        assert_eq!(t.pages_crawled, 12);
+        assert_eq!(t.requests_sent, 34);
+        assert_eq!(t.issues_found, 3);
+
+        // crash recovery: running/paused → cancelled
+        db.insert_scan_task("crawl", "https://b.test/", None).unwrap();
+        db.reset_scan_tasks_running().unwrap();
+        let all = db.list_scan_tasks().unwrap();
+        assert!(all.iter().all(|t| t.status == "cancelled"), "{all:?}");
+    }
+
+    #[test]
+    fn scan_config_seed_save_delete() {
+        let db = temp_db("scan_config");
+        // default "Crawl + audit" seeded on first open
+        let configs = db.list_scan_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "Crawl + audit");
+        assert!(configs[0].is_default);
+        assert!(configs[0].passive_enabled);
+        assert!(configs[0].active_checks.is_empty());
+        assert_eq!(configs[0].crawl_max_pages, 50);
+
+        // insert new, update it, verify
+        let id = db
+            .save_scan_config(
+                None,
+                "Audit only",
+                false,
+                &["sqli-error".into(), "xss-reflected".into()],
+                10,
+                2,
+                2,
+                100,
+                false,
+            )
+            .unwrap();
+        let c = db.get_scan_config(id).unwrap().expect("config");
+        assert_eq!(c.name, "Audit only");
+        assert!(!c.passive_enabled);
+        assert_eq!(c.active_checks, vec!["sqli-error", "xss-reflected"]);
+        assert_eq!(c.crawl_max_pages, 10);
+
+        db.save_scan_config(
+            Some(id),
+            "Audit v2",
+            true,
+            &[],
+            20,
+            3,
+            4,
+            50,
+            true,
+        )
+        .unwrap();
+        let c2 = db.get_scan_config(id).unwrap().expect("config");
+        assert_eq!(c2.name, "Audit v2");
+        assert!(c2.is_default);
+        // is_default moved: old default cleared
+        let all = db.list_scan_configs().unwrap();
+        let defaults: Vec<_> = all.iter().filter(|c| c.is_default).collect();
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].id, id);
+
+        assert_eq!(db.delete_scan_config(id).unwrap(), 1);
+        assert!(db.get_scan_config(id).unwrap().is_none());
+        assert_eq!(db.list_scan_configs().unwrap().len(), 1); // seed remains
     }
 }

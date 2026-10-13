@@ -3,6 +3,7 @@ pub mod db;
 pub mod ca;
 pub mod intruder;
 pub mod proxy;
+pub mod scanner;
 
 use proxy::SharedProxy;
 

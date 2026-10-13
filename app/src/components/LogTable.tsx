@@ -10,6 +10,7 @@ const TOOL_FILTERS: [string, string][] = [
   ["sequencer", "Sequencer"],
   ["scope", "Scope"],
   ["match", "Match / replace"],
+  ["scanner", "Scanner"],
   ["settings", "Settings"],
   ["system", "System"],
 ];
@@ -35,16 +36,22 @@ function fmtTs(ts: string): string {
 export default function LogTable({
   limit = 200,
   focus = null,
+  tool = null,
 }: {
   limit?: number;
   focus?: { id: number; seq: number } | null;
+  tool?: string | null;
 }) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [toolF, setToolF] = useState("");
+  const [toolF, setToolF] = useState(tool ?? "");
   const [levelF, setLevelF] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (tool) setToolF(tool);
+  }, [tool]);
 
   const load = useCallback(async () => {
     try {
@@ -106,19 +113,28 @@ export default function LogTable({
   return (
     <>
       <div className="toolbar">
-        <span className="muted">Tool</span>
-        <select
-          className="select"
-          aria-label="Filter by tool"
-          value={toolF}
-          onChange={(e) => setToolF(e.target.value)}
-        >
-          {TOOL_FILTERS.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </select>
+        {tool ? (
+          <>
+            <span className="muted">Tool</span>
+            <span className="chip">{TOOL_FILTERS.find(([v]) => v === tool)?.[1] ?? tool}</span>
+          </>
+        ) : (
+          <>
+            <span className="muted">Tool</span>
+            <select
+              className="select"
+              aria-label="Filter by tool"
+              value={toolF}
+              onChange={(e) => setToolF(e.target.value)}
+            >
+              {TOOL_FILTERS.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <span className="muted">Level</span>
         <select
           className="select"

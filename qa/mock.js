@@ -100,6 +100,194 @@
     }),
   ];
 
+  const SCANNER_CHECKS = [
+    { id: "missing-csp", name: "Content Security Policy not set", kind: "passive", severity: "medium", description: "The response does not include a Content-Security-Policy header.", remediation: "Add a Content-Security-Policy header restricting script, style and object sources." },
+    { id: "missing-hsts", name: "HTTP Strict Transport Security not set", kind: "passive", severity: "medium", description: "The HTTPS response lacks a Strict-Transport-Security header.", remediation: "Add Strict-Transport-Security: max-age=31536000; includeSubDomains." },
+    { id: "missing-xfo", name: "X-Frame-Options not set", kind: "passive", severity: "low", description: "The response lacks X-Frame-Options, allowing clickjacking.", remediation: "Add X-Frame-Options: DENY or SAMEORIGIN (or frame-ancestors in CSP)." },
+    { id: "missing-xcto", name: "X-Content-Type-Options not set", kind: "passive", severity: "info", description: "The response lacks X-Content-Type-Options: nosniff.", remediation: "Add X-Content-Type-Options: nosniff." },
+    { id: "missing-referrer-policy", name: "Referrer-Policy not set", kind: "passive", severity: "info", description: "The response lacks a Referrer-Policy header.", remediation: "Add Referrer-Policy: strict-origin-when-cross-origin." },
+    { id: "cookie-no-httponly", name: "Cookie without HttpOnly", kind: "passive", severity: "medium", description: "A cookie is set without the HttpOnly flag.", remediation: "Set HttpOnly on all session cookies." },
+    { id: "cookie-no-secure", name: "Cookie without Secure", kind: "passive", severity: "low", description: "A cookie is set without the Secure flag.", remediation: "Set the Secure flag on cookies delivered over HTTPS." },
+    { id: "server-banner", name: "Server banner discloses software", kind: "passive", severity: "info", description: "The Server header discloses the web server product and version.", remediation: "Suppress or genericise the Server header." },
+    { id: "x-powered-by", name: "X-Powered-By discloses framework", kind: "passive", severity: "info", description: "The X-Powered-By header discloses the application framework.", remediation: "Remove the X-Powered-By header." },
+    { id: "directory-listing", name: "Directory listing enabled", kind: "passive", severity: "medium", description: "The response appears to be an auto-generated directory index.", remediation: "Disable directory listing on the web server." },
+    { id: "sql-error-leak", name: "SQL error message leaked", kind: "passive", severity: "critical", description: "The response body contains a database error string, suggesting a possible injection point.", remediation: "Use parameterised queries and generic error pages; never return raw database errors to clients." },
+    { id: "stack-trace-leak", name: "Stack trace leaked", kind: "passive", severity: "high", description: "The response body contains a stack trace or exception dump.", remediation: "Return generic error pages in production; log exceptions server-side only." },
+    { id: "email-disclosure", name: "Email address disclosed", kind: "passive", severity: "info", description: "The response body contains one or more email addresses.", remediation: "Review whether the address should be public; consider contact forms instead." },
+    { id: "internal-ip-disclosure", name: "Internal IP address disclosed", kind: "passive", severity: "low", description: "The response body contains a private RFC1918 IP address.", remediation: "Remove internal addressing details from public responses." },
+    { id: "mixed-content", name: "Mixed content on HTTPS page", kind: "passive", severity: "medium", description: "An HTTPS page references insecure http:// resources.", remediation: "Serve all subresources over HTTPS." },
+    { id: "basic-auth-plaintext", name: "HTTP Basic authentication over plaintext", kind: "passive", severity: "high", description: "Credentials are sent via Basic auth without TLS.", remediation: "Enforce HTTPS for all authentication." },
+    { id: "password-in-url", name: "Password in URL", kind: "passive", severity: "high", description: "A password appears in the request URL.", remediation: "Move credentials into the request body and use POST over HTTPS." },
+
+    { id: "sqli-error", name: "SQL injection (error-based)", kind: "active", severity: "high", description: "A SQL metacharacter injected into a parameter produced a database error signature in the response, indicating a possible injection point.", remediation: "Use parameterised queries / prepared statements for all database access; validate and encode user input." },
+    { id: "xss-reflected", name: "Reflected cross-site scripting", kind: "active", severity: "high", description: "A canary string injected into a parameter was reflected in the response unencoded, so an attacker-controlled script could execute in a victim's browser.", remediation: "Context-encode all untrusted data at output (HTML entity, JS, URL, CSS context as appropriate); deploy a CSP as defence in depth." },
+    { id: "path-traversal", name: "Path traversal", kind: "active", severity: "high", description: "A ../-style payload in a parameter caused the server to return contents of a sensitive system file (/etc/passwd or win.ini), indicating a directory traversal flaw.", remediation: "Canonicalise and validate paths server-side; never build filesystem paths directly from user input; run the service with least privilege." },
+    { id: "open-redirect", name: "Open redirect", kind: "active", severity: "medium", description: "A parameter controlling a redirect accepted an attacker-controlled absolute URL, so the endpoint can be used to bounce victims to arbitrary sites (phishing).", remediation: "Validate redirect targets against an allow-list of paths/hosts; never redirect to a full URL supplied in user input." },
+    { id: "sensitive-files", name: "Sensitive file or directory exposed", kind: "active", severity: "info", description: "A well-known sensitive path (e.g. /.git/config, /.env, /backup.zip) returned HTTP 200, exposing configuration or backups.", remediation: "Block access to VCS metadata, env files and backup archives at the web server / WAF layer." },
+  ];
+
+  let issues = [
+    {
+      id: 1,
+      check_id: "sql-error-leak",
+      name: "SQL error message leaked",
+      severity: "critical",
+      confidence: "firm",
+      host: "shop.example.com",
+      url: "https://shop.example.com/login",
+      method: "POST",
+      path: "/login",
+      param: "user",
+      description: "The response to the login request contains a database error string, indicating the input may reach a SQL query unsanitised.",
+      remediation: "Use parameterised queries and generic error pages; never return raw database errors to clients.",
+      evidence: "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version",
+      exchange_id: 3,
+      status: "open",
+      created_at: "2026-10-11 09:12:21",
+    },
+    {
+      id: 2,
+      check_id: "stack-trace-leak",
+      name: "Stack trace leaked",
+      severity: "high",
+      confidence: "certain",
+      host: "shop.example.com",
+      url: "https://shop.example.com/api/profile",
+      method: "GET",
+      path: "/api/profile",
+      param: "",
+      description: "The 500 response body contains a stack trace, exposing internal implementation details.",
+      remediation: "Return generic error pages in production; log exceptions server-side only.",
+      evidence: 'trace": "mock',
+      exchange_id: 12,
+      status: "open",
+      created_at: "2026-10-11 09:49:07",
+    },
+    {
+      id: 3,
+      check_id: "missing-csp",
+      name: "Content Security Policy not set",
+      severity: "medium",
+      confidence: "certain",
+      host: "shop.example.com",
+      url: "https://shop.example.com/",
+      method: "GET",
+      path: "/",
+      param: "",
+      description: "The HTML response does not include a Content-Security-Policy header, leaving the page open to XSS amplification.",
+      remediation: "Add a Content-Security-Policy header restricting script, style and object sources.",
+      evidence: "no Content-Security-Policy header present",
+      exchange_id: 1,
+      status: "open",
+      created_at: "2026-10-11 09:12:10",
+    },
+    {
+      id: 4,
+      check_id: "missing-hsts",
+      name: "HTTP Strict Transport Security not set",
+      severity: "medium",
+      confidence: "certain",
+      host: "shop.example.com",
+      url: "https://shop.example.com/",
+      method: "GET",
+      path: "/",
+      param: "",
+      description: "The HTTPS response lacks a Strict-Transport-Security header, allowing protocol-downgrade attacks.",
+      remediation: "Add Strict-Transport-Security: max-age=31536000; includeSubDomains.",
+      evidence: "no Strict-Transport-Security header present",
+      exchange_id: 1,
+      status: "open",
+      created_at: "2026-10-11 09:12:10",
+    },
+    {
+      id: 5,
+      check_id: "cookie-no-secure",
+      name: "Cookie without Secure",
+      severity: "low",
+      confidence: "firm",
+      host: "shop.example.com",
+      url: "https://shop.example.com/",
+      method: "GET",
+      path: "/",
+      param: "",
+      description: "The session cookie 'sid' is set without the Secure flag.",
+      remediation: "Set the Secure flag on cookies delivered over HTTPS.",
+      evidence: "Set-Cookie: sid=abc123; HttpOnly",
+      exchange_id: 1,
+      status: "open",
+      created_at: "2026-10-11 09:12:10",
+    },
+    {
+      id: 6,
+      check_id: "server-banner",
+      name: "Server banner discloses software",
+      severity: "info",
+      confidence: "certain",
+      host: "shop.example.com",
+      url: "https://shop.example.com/admin",
+      method: "GET",
+      path: "/admin",
+      param: "",
+      description: "The Server header discloses Apache/2.4.57, revealing the product and exact version.",
+      remediation: "Suppress or genericise the Server header.",
+      evidence: "Server: Apache/2.4.57",
+      exchange_id: 6,
+      status: "open",
+      created_at: "2026-10-11 09:30:42",
+    },
+    {
+      id: 7,
+      check_id: "missing-xfo",
+      name: "X-Frame-Options not set",
+      severity: "low",
+      confidence: "certain",
+      host: "shop.example.com",
+      url: "https://shop.example.com/checkout",
+      method: "GET",
+      path: "/checkout",
+      param: "",
+      description: "The response lacks X-Frame-Options, allowing the page to be framed by third-party origins (clickjacking).",
+      remediation: "Add X-Frame-Options: DENY or SAMEORIGIN (or frame-ancestors in CSP).",
+      evidence: "no X-Frame-Options header present",
+      exchange_id: 8,
+      status: "acknowledged",
+      created_at: "2026-10-11 09:35:18",
+    },
+  ];
+
+  let scanTaskSeq = 1;
+  const scanTasks = [
+    {
+      id: 1,
+      kind: "crawl-audit",
+      target: "https://shop.example.com/",
+      config_id: null,
+      status: "done",
+      pages_crawled: 14,
+      requests_sent: 42,
+      issues_found: 7,
+      error: null,
+      created_at: "2026-10-11 09:20:00",
+      updated_at: "2026-10-11 09:21:30",
+    },
+  ];
+
+  let scanConfigSeq = 2;
+  const scanConfigs = [
+    {
+      id: 1,
+      name: "Crawl + audit",
+      passive_enabled: true,
+      active_checks: [],
+      crawl_max_pages: 50,
+      crawl_max_depth: 3,
+      audit_threads: 4,
+      throttle_ms: 50,
+      is_default: true,
+      created_at: "2026-10-11 09:00:00",
+    },
+  ];
+
   const wsConns = [
     {
       id: 1,
@@ -141,6 +329,10 @@
   };
 
   const LOGS = [
+    { id: 13, ts: "2026-10-11 09:24:52", tool: "scanner", level: "info", message: "Crawl of https://shop.example.com/ finished: 14 pages, 42 requests" },
+    { id: 12, ts: "2026-10-11 09:24:40", tool: "scanner", level: "warn", message: "Reflected XSS candidate on /search?q= (param q)" },
+    { id: 11, ts: "2026-10-11 09:24:38", tool: "scanner", level: "warn", message: "SQL error leak on /api/products?id= (param id)" },
+    { id: 10, ts: "2026-10-11 09:24:12", tool: "scanner", level: "info", message: "Audit started against https://shop.example.com/ (crawl-audit)" },
     { id: 9, ts: "2026-10-11 09:22:31", tool: "repeater", level: "info", message: "GET https://shop.example.com/api/profile -> 500 in 74ms" },
     { id: 8, ts: "2026-10-11 09:21:17", tool: "proxy", level: "info", message: "Recorded GET fonts.gstatic.com/s/inter/v18/font.woff2 (200)" },
     { id: 7, ts: "2026-10-11 09:19:03", tool: "proxy", level: "info", message: "Recorded POST shop.example.com/api/cart (201)" },
@@ -586,7 +778,15 @@
             final_url: null,
           },
     init_ca: () => "C:\\Users\\qa\\AppData\\Local\\WebProxyToolkit\\ca.crt",
-    log_list: () => LOGS,
+    log_list: (a) => {
+      const f = (a && a.filter) || {};
+      return LOGS.filter((e) => {
+        if (f.tool && e.tool !== f.tool) return false;
+        if (f.level && e.level !== f.level) return false;
+        if (f.query && !e.message.toLowerCase().includes(String(f.query).toLowerCase())) return false;
+        return true;
+      }).slice(0, f.limit || LOGS.length);
+    },
     log_clear: () => null,
     log_add: () => null,
     sequencer_sample: () => [
@@ -780,6 +980,192 @@
       const n = (iResults[cid] || []).length;
       iResults[cid] = [];
       return n;
+    },
+
+    // ---- scanner (phase 4a: issues + passive checks) ----
+    checks_list: () => SCANNER_CHECKS.slice(),
+    issues_list: (a) => {
+      const sevs = (a && a.severities) || null;
+      const host = (a && a.host) || "";
+      const status = (a && a.status) || "";
+      const text = ((a && a.text) || "").toLowerCase();
+      const off = (a && a.offset) || 0;
+      const lim = (a && a.limit) || 500;
+      let rows = issues.slice();
+      if (sevs && sevs.length) rows = rows.filter((i) => sevs.includes(i.severity));
+      if (host) rows = rows.filter((i) => i.host === host);
+      if (status) rows = rows.filter((i) => i.status === status);
+      if (text)
+        rows = rows.filter(
+          (i) =>
+            i.name.toLowerCase().includes(text) ||
+            i.url.toLowerCase().includes(text) ||
+            i.param.toLowerCase().includes(text) ||
+            i.evidence.toLowerCase().includes(text)
+        );
+      return { rows: rows.slice(off, off + lim), total: rows.length };
+    },
+    issues_get: (a) => issues.find((i) => i.id === (a && a.id)) || null,
+    issues_update_status: (a) => {
+      const i = issues.find((x) => x.id === (a && a.id));
+      if (!i) return 0;
+      i.status = (a && a.status) || i.status;
+      emit("issue-updated", i);
+      return 1;
+    },
+    issues_delete: (a) => {
+      const id = (a && a.id) || 0;
+      const idx = issues.findIndex((x) => x.id === id);
+      if (idx < 0) return 0;
+      issues.splice(idx, 1);
+      emit("issue-deleted", id);
+      return 1;
+    },
+    issues_counts: () => {
+      const c = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      issues.forEach((i) => {
+        c[i.severity] = (c[i.severity] || 0) + 1;
+      });
+      return c;
+    },
+
+    // ---- scan tasks (phase 4b) ----
+    scan_start: (a) => {
+      const target = (a && a.target) || "https://shop.example.com/";
+      const kind = (a && a.kind) || "crawl-audit";
+      const id = scanTaskSeq++;
+      const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+      scanTasks.push({
+        id,
+        kind,
+        target,
+        config_id: (a && a.configId) ?? null,
+        status: "running",
+        pages_crawled: 0,
+        requests_sent: 0,
+        issues_found: 0,
+        error: null,
+        created_at: now,
+        updated_at: now,
+      });
+      // simulate progress
+      const t = scanTasks.find((x) => x.id === id);
+      const timer = setInterval(() => {
+        if (!t || t.status !== "running") {
+          clearInterval(timer);
+          return;
+        }
+        t.pages_crawled += 2;
+        t.requests_sent += 5;
+        t.issues_found += t.pages_crawled === 2 ? 1 : 0;
+        t.updated_at = new Date().toISOString().replace("T", " ").slice(0, 19);
+        if (t.pages_crawled >= 20) {
+          t.status = "done";
+          clearInterval(timer);
+        }
+        emit("scan-progress", {
+          task_id: id,
+          pages: t.pages_crawled,
+          requests: t.requests_sent,
+          issues: t.issues_found,
+          status: t.status,
+          queued: Math.max(0, 10 - t.pages_crawled / 2),
+        });
+      }, 400);
+      return id;
+    },
+    scan_cancel: (a) => {
+      const id = (a && a.taskId) || 0;
+      const t = scanTasks.find((x) => x.id === id);
+      if (!t) return null;
+      t.status = "cancelled";
+      emit("scan-progress", {
+        task_id: id,
+        pages: t.pages_crawled,
+        requests: t.requests_sent,
+        issues: t.issues_found,
+        status: "cancelled",
+      });
+      return null;
+    },
+    scan_pause: (a) => {
+      const id = (a && a.taskId) || 0;
+      const t = scanTasks.find((x) => x.id === id);
+      if (t) t.status = "paused";
+      return null;
+    },
+    scan_resume: (a) => {
+      const id = (a && a.taskId) || 0;
+      const t = scanTasks.find((x) => x.id === id);
+      if (t) t.status = "running";
+      return null;
+    },
+    scan_tasks_list: () => scanTasks.slice(),
+    scan_state: () => ({
+      running: scanTasks
+        .filter((t) => t.status === "running" || t.status === "paused")
+        .map((t) => ({
+          task_id: t.id,
+          pages: t.pages_crawled,
+          requests: t.requests_sent,
+          issues: t.issues_found,
+          paused: t.status === "paused",
+          elapsed_ms: 1200,
+        })),
+    }),
+
+    // ---- scan configs (phase 4c) ----
+    scan_config_list: () =>
+      scanConfigs
+        .slice()
+        .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0) || a.name.localeCompare(b.name)),
+    scan_config_get: (a) => {
+      const id = (a && a.configId) || 0;
+      const c = scanConfigs.find((x) => x.id === id);
+      if (!c) throw new Error(`scan config ${id} not found`);
+      return c;
+    },
+    scan_config_save: (a) => {
+      const cfg = (a && a.config) || {};
+      const name = (cfg.name || "").trim();
+      if (!name) throw new Error("config name is required");
+      if (cfg.is_default) scanConfigs.forEach((c) => (c.is_default = false));
+      if (cfg.id) {
+        const c = scanConfigs.find((x) => x.id === cfg.id);
+        if (!c) throw new Error(`scan config ${cfg.id} not found`);
+        Object.assign(c, {
+          name,
+          passive_enabled: !!cfg.passive_enabled,
+          active_checks: cfg.active_checks || [],
+          crawl_max_pages: cfg.crawl_max_pages ?? 50,
+          crawl_max_depth: cfg.crawl_max_depth ?? 3,
+          audit_threads: cfg.audit_threads ?? 4,
+          throttle_ms: cfg.throttle_ms ?? 50,
+          is_default: !!cfg.is_default,
+        });
+        return c.id;
+      }
+      const id = scanConfigSeq++;
+      scanConfigs.push({
+        id,
+        name,
+        passive_enabled: !!cfg.passive_enabled,
+        active_checks: cfg.active_checks || [],
+        crawl_max_pages: cfg.crawl_max_pages ?? 50,
+        crawl_max_depth: cfg.crawl_max_depth ?? 3,
+        audit_threads: cfg.audit_threads ?? 4,
+        throttle_ms: cfg.throttle_ms ?? 50,
+        is_default: !!cfg.is_default,
+        created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+      });
+      return id;
+    },
+    scan_config_delete: (a) => {
+      const id = (a && a.configId) || 0;
+      const i = scanConfigs.findIndex((x) => x.id === id);
+      if (i < 0) throw new Error(`scan config ${id} not found`);
+      scanConfigs.splice(i, 1);
+      return null;
     },
   };
 

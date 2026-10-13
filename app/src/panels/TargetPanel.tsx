@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ScopeRule } from "../types";
 import { tabListKeyDown } from "../components/tabKeys";
+import { IssueTable } from "../components/IssueTable";
+import { scannerApi } from "../lib/scanner";
 
 type Sitemap = { host: string; children: { path: string; count: number }[] }[];
 
@@ -13,6 +15,7 @@ export default function TargetPanel({ setToast }: { setToast: (t: string) => voi
   const [sitemap, setSitemap] = useState<Sitemap>([]);
   const [filter, setFilter] = useState("");
   const [form, setForm] = useState({ mode: "include", kind: "host", pattern: "" });
+  const [selectedHost, setSelectedHost] = useState("");
 
   async function loadRules() {
     try {
@@ -65,7 +68,7 @@ export default function TargetPanel({ setToast }: { setToast: (t: string) => voi
   const SUBS: [Sub, string, boolean][] = [
     ["sitemap", "Site map", false],
     ["scope", "Scope", false],
-    ["issues", "Issues", true],
+    ["issues", "Issues", false],
   ];
 
   return (
@@ -100,7 +103,23 @@ export default function TargetPanel({ setToast }: { setToast: (t: string) => voi
               <button className="active" aria-pressed="true">
                 URL view
               </button>
-              <button disabled title="Crawler arrives in Phase 4">
+              <button
+                onClick={async () => {
+                  // start a crawl-audit from the first sitemap host root
+                  const host = sitemap[0]?.host;
+                  if (!host) {
+                    setToast("No hosts in the site map yet — browse through the proxy first");
+                    return;
+                  }
+                  const scheme = host.includes(":") ? "http" : "https";
+                  try {
+                    const id = await scannerApi.scanStart(`${scheme}://${host}/`, "crawl-audit");
+                    setToast(`Crawl + audit started against ${host} (task #${id})`);
+                  } catch (e) {
+                    setToast(String(e));
+                  }
+                }}
+              >
                 Crawl paths view
               </button>
             </div>
@@ -169,6 +188,15 @@ export default function TargetPanel({ setToast }: { setToast: (t: string) => voi
                       </span>{" "}
                       <button className="btn mini" onClick={() => includeHost(h.host)}>
                         Add to scope
+                      </button>{" "}
+                      <button
+                        className="btn mini"
+                        onClick={() => {
+                          setSelectedHost(h.host);
+                          setSub("issues");
+                        }}
+                      >
+                        View issues
                       </button>
                       <ul>
                         {h.children
@@ -262,6 +290,32 @@ export default function TargetPanel({ setToast }: { setToast: (t: string) => voi
               </button>
             </div>
           </section>
+        </div>
+      )}
+      {sub === "issues" && (
+        <div className="panel" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div className="toolbar">
+            <label className="muted" htmlFor="target-issue-host">
+              Host:
+            </label>
+            <select
+              id="target-issue-host"
+              className="select"
+              value={selectedHost}
+              onChange={(e) => setSelectedHost(e.target.value)}
+              aria-label="Filter issues by host"
+            >
+              <option value="">All hosts</option>
+              {sitemap.map((h) => (
+                <option key={h.host} value={h.host}>
+                  {h.host}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grow min-h-0">
+            <IssueTable host={selectedHost} setToast={setToast} />
+          </div>
         </div>
       )}
     </div>

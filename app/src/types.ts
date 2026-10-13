@@ -159,3 +159,89 @@ export function statusClass(s: number | null): string {
   if (s >= 400) return "chip err";
   return "chip";
 }
+
+// ---------------------------------------------------------- Intruder (Phase 3)
+
+export type IntruderAttack = "sniper" | "battering_ram" | "pitchfork" | "cluster_bomb";
+
+export type IntruderCampaignSummary = {
+  id: number;
+  name: string;
+  attack_type: IntruderAttack;
+  status: string;
+  positions: number;
+  updated_at: string;
+};
+
+export type IntruderCampaign = {
+  id: number;
+  name: string;
+  attack_type: IntruderAttack;
+  req_raw: string;
+  url_hint: string | null;
+  follow: boolean;
+  set_map: string;
+  threads: number;
+  delay_ms: number;
+  max_requests: number;
+  extractors: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IntruderProcessor = {
+  kind: string;
+  a?: string | null;
+  b?: string | null;
+};
+
+export type IntruderExtractor = {
+  name: string;
+  pattern: string;
+};
+
+export type IntruderPayloadSet = {
+  id: number;
+  campaign_id: number;
+  set_index: number;
+  name: string;
+  kind: string; // list | numbers
+  items: string;
+  start_i: number | null;
+  end_i: number | null;
+  step_i: number | null;
+  processors: string; // JSON [{kind, a, b}]
+};
+
+export type IntruderRunState = {
+  campaign_id: number;
+  status: string;
+  sent: number;
+  total: number;
+  errors: number;
+  done: boolean;
+  elapsed_ms: number;
+  rps: number;
+};
+
+export type IntruderResultRow = {
+  seq: number;
+  combo: string; // JSON string[]
+  status: number | null;
+  resp_len: number;
+  time_ms: number;
+  error: string | null;
+  extracted: string; // JSON {name: value}
+};
+
+export type IntruderResultFull = IntruderResultRow & {
+  req_raw: string;
+  resp_raw: string | null;
+};
+
+export type IntruderCampaignDetail = {
+  campaign: IntruderCampaign;
+  payloads: IntruderPayloadSet[];
+  state: IntruderRunState;
+};

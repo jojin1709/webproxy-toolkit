@@ -70,11 +70,63 @@ CREATE TABLE IF NOT EXISTS repeater_history (
 CREATE INDEX IF NOT EXISTS idx_repeater_history_tab ON repeater_history(tab_id, id);
 
 CREATE TABLE IF NOT EXISTS match_replace (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  enabled   INTEGER NOT NULL DEFAULT 1,
-  phase     TEXT NOT NULL CHECK (phase IN ('request','response')),
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  enabled  INTEGER NOT NULL DEFAULT 1,
+  phase    TEXT NOT NULL CHECK (phase IN ('request','response')),
   match_kind TEXT NOT NULL CHECK (match_kind IN ('literal','regex','header')),
   match_val TEXT NOT NULL,
   replace_val TEXT NOT NULL,
-  comment   TEXT
+  comment  TEXT
 );
+
+-- Intruder attack campaign: request template may contain §…§ position markers
+CREATE TABLE IF NOT EXISTS intruder_campaigns (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  attack_type  TEXT NOT NULL CHECK (attack_type IN ('sniper','battering_ram','pitchfork','cluster_bomb')),
+  req_raw      TEXT NOT NULL,
+  url_hint     TEXT,
+  follow       INTEGER NOT NULL DEFAULT 0,
+  set_map      TEXT NOT NULL DEFAULT '[]',  -- JSON int[]: payload set index per position
+  threads      INTEGER NOT NULL DEFAULT 4,
+  delay_ms     INTEGER NOT NULL DEFAULT 0,
+  max_requests INTEGER NOT NULL DEFAULT 0,  -- 0 = unlimited (total combos)
+  extractors   TEXT NOT NULL DEFAULT '[]',  -- JSON [{name, pattern}]
+  status       TEXT NOT NULL DEFAULT 'draft'
+               CHECK (status IN ('draft','running','paused','done','stopped','error')),
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+-- one row per payload set of a campaign
+CREATE TABLE IF NOT EXISTS intruder_payloads (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL REFERENCES intruder_campaigns(id) ON DELETE CASCADE,
+  set_index   INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('list','numbers')),
+  items       TEXT NOT NULL DEFAULT '',        -- newline separated payloads (kind=list)
+  start_i     INTEGER,                         -- numbers kind: start
+  end_i       INTEGER,                         -- numbers kind: end (inclusive)
+  step_i      INTEGER,                         -- numbers kind: step
+  processors  TEXT NOT NULL DEFAULT '[]',      -- JSON [{kind, a, b}]
+  UNIQUE (campaign_id, set_index)
+);
+
+-- one row per request the attack engine sent
+CREATE TABLE IF NOT EXISTS intruder_results (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL REFERENCES intruder_campaigns(id) ON DELETE CASCADE,
+  seq         INTEGER NOT NULL,               -- attack order (0-based)
+  combo       TEXT NOT NULL DEFAULT '[]',     -- JSON string[] payload values used
+  status      INTEGER,                        -- HTTP status, NULL on transport error
+  resp_len    INTEGER NOT NULL DEFAULT 0,
+  time_ms     INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  req_raw     TEXT NOT NULL,
+  resp_raw    TEXT,
+  extracted   TEXT NOT NULL DEFAULT '{}',     -- JSON {extractor_name: value}
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intruder_results_campaign ON intruder_results(campaign_id, seq);
+CREATE INDEX IF NOT EXISTS idx_intruder_campaigns_updated ON intruder_campaigns(updated_at DESC);

@@ -1,6 +1,7 @@
-mod commands;
-mod db;
+pub mod commands;
+pub mod db;
 pub mod ca;
+pub mod intruder;
 pub mod proxy;
 
 use proxy::SharedProxy;

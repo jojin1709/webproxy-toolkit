@@ -25,10 +25,10 @@ Comparer (side-by-side diff word/line),tools,must,yes,yes,line + word LCS diff w
 Sequencer (session token entropy/randomness),tools,must,yes,yes,request+paste modes; cookie/header/regex sampling + chi-square entropy Monte Carlo tests
 Logger (proxy/extension/event log),tools,must,yes,yes,persistent log table with tool/level/message filters
 Global search (history + sitemap + highlight),tools,must,yes,no,
-Intruder (sniper/battering ram/pitchfork/cluster bomb),intruder,must,yes,no,
-Intruder payload sets + payload processors (hash/encode/replace),intruder,must,yes,no,
-Intruder resource pool (throttling/concurrency),intruder,must,yes,no,
-Intruder attack results + grep extractors,intruder,must,yes,no,
+Intruder (sniper/battering ram/pitchfork/cluster bomb),intruder,must,yes,yes,§…§ positions; 4 combo strategies; threads/delay/max resource pool
+Intruder payload sets + payload processors (hash/encode/replace),intruder,must,yes,yes,up to 8 sets; list/numbers kinds; 14 processors (url/base64/md5/sha/replace/prefix/suffix/case/trim/reverse)
+Intruder resource pool (throttling/concurrency),intruder,must,yes,yes,threads 1-64 delay 0-60s max-requests cap; pause/resume/stop with crash-recovery reset
+Intruder attack results + grep extractors,intruder,must,yes,yes,inline results table with combo/status/length/time; regex extractors with capture groups; full req/resp detail
 Scanner passive checks (on proxy/repeater traffic),scanner,must,yes,no,issue framework
 Scanner active audit engine (crawl + audit),scanner,must,yes,no,exhaustive check library
 Issue definitions catalog + issue detail view,scanner,must,yes,no,

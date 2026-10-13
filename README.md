@@ -10,8 +10,8 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 |-------|---------|-------|
 | 1 | App shell, Proxy (history / intercept / options), Target, Repeater, Decoder, Settings | done |
 | 2a | Comparer, Sequencer, Logger (+ Dashboard event log) | done |
-| 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | in progress |
-| 3 | Intruder (attack engine, positions, payload sets, results) | planned |
+| 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | done |
+| 3 | Intruder (attack engine, positions, payload sets, results) | done |
 | 4 | Passive scanner, Issues view, active audit, crawling, scan configs | planned |
 | 6 | Extensions (embedded JS engine, Burp-like extension API) | planned |
 | 7 | Collaborator (local out-of-band interaction server) | planned |
@@ -22,6 +22,7 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 - **Proxy** — MITM HTTP/HTTPS proxy with a locally generated CA, HTTP history with detail panes (Pretty / Raw / Hex, find bar), request & response interception with an inline held-message editor, scope and match/replace rules, options.
 - **Target** — site map with URL/HTTP-method views, crawl paths, in-scope filtering, issue list.
 - **Repeater** — multi-tab request editor with parsed request inspector (line, headers, parameters, body), send/cancel, save/close.
+- **Intruder** — attack engine with §…§ positions (auto-detect / wrap selection), 4 attack types (sniper, battering ram, pitchfork, cluster bomb), up to 8 payload sets (simple list / numbers) with 14 payload processors (url/base64 encode+decode, md5/sha1/sha256, replace, prefix/suffix, upper/lower, trim, reverse), threads/delay/max-request resource pool, live results with payload combos, status codes, grep extractors and full request/response inspection.
 - **Comparer** — side-by-side line and word diffs of any two messages, differences table with prev/next navigation.
 - **Sequencer** — token randomness analysis: sampling from a live URL (cookie / header / regex) or pasted samples, entropy, chi-square uniformity, Monte Carlo π, byte-level per-position stats.
 - **Logger** — persistent event log (proxy, repeater, scope, system) with tool/level/text filters, also embedded in the Dashboard.
@@ -69,7 +70,7 @@ For browser-driven testing, start the backend with `WEBPROXY_AUTOSTART=18080` to
 ### QA harness
 
 ```powershell
-python qa\shot.py        # 23 screenshots against the dev server, fails on console errors
+python qa\shot.py        # 38 screenshots against the dev server, fails on console errors
 ```
 
 `qa/mock.js` shims the Tauri IPC so the UI runs in a plain browser; `window.__SCENARIO__` switches fixtures (held request, stopped listener, …). Screenshots land in `qa/shots/` (gitignored).

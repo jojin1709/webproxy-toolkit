@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-fn log_event(app: &AppHandle, state: &SharedProxy, tool: &str, level: &str, message: &str) {
+pub(crate) fn log_event(app: &AppHandle, state: &SharedProxy, tool: &str, level: &str, message: &str) {
     if let Ok(db) = db_of(state) {
         if let Ok(entry) = db.insert_log(tool, level, message) {
             let _ = app.emit("log-added", entry);
@@ -974,7 +974,461 @@ pub fn register(
             log_list,
             log_clear,
             sequencer_sample,
+            intruder_campaign_new,
+            intruder_campaign_list,
+            intruder_campaign_get,
+            intruder_campaign_save,
+            intruder_campaign_delete,
+            intruder_positions_auto,
+            intruder_payloads_save,
+            intruder_start,
+            intruder_pause,
+            intruder_resume,
+            intruder_stop,
+            intruder_state,
+            intruder_results_list,
+            intruder_result_get,
+            intruder_results_clear,
         ])
+}
+
+// ---------------------------------------------------------------- Intruder
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct ProcessorInput {
+    pub kind: String,
+    #[serde(default)]
+    pub a: Option<String>,
+    #[serde(default)]
+    pub b: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct ExtractorInput {
+    pub name: String,
+    pub pattern: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct PayloadSetInput {
+    pub index: i64,
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub items: String,
+    #[serde(default)]
+    pub start: Option<i64>,
+    #[serde(default)]
+    pub end: Option<i64>,
+    #[serde(default)]
+    pub step: Option<i64>,
+    #[serde(default)]
+    pub processors: Vec<ProcessorInput>,
+}
+
+const PROCESSOR_KINDS: &[&str] = &[
+    "url_encode", "url_decode", "base64_encode", "base64_decode", "md5", "sha1", "sha256",
+    "replace", "prefix", "suffix", "upper", "lower", "trim", "reverse",
+];
+const ATTACK_TYPES: &[&str] = &["sniper", "battering_ram", "pitchfork", "cluster_bomb"];
+
+fn validate_extractors(list: &[ExtractorInput]) -> Result<(), String> {
+    for e in list {
+        if e.name.trim().is_empty() {
+            return Err("extractor name cannot be empty".into());
+        }
+        regex::Regex::new(&e.pattern)
+            .map_err(|err| format!("extractor \"{}\": {err}", e.name))?;
+    }
+    Ok(())
+}
+
+fn validate_processor_kinds(list: &[ProcessorInput]) -> Result<(), String> {
+    for p in list {
+        if !PROCESSOR_KINDS.contains(&p.kind.as_str()) {
+            return Err(format!("unknown payload processor \"{}\"", p.kind));
+        }
+    }
+    Ok(())
+}
+
+fn emit_progress(app: Option<&AppHandle>, payload: &serde_json::Value) {
+    if let Some(a) = app {
+        let _ = a.emit("intruder-progress", payload.clone());
+    }
+}
+
+fn log_intruder(app: Option<&AppHandle>, state: &SharedProxy, level: &str, message: &str) {
+    if let Ok(db) = db_of(state) {
+        if let Ok(entry) = db.insert_log("intruder", level, message) {
+            if let Some(a) = app {
+                let _ = a.emit("log-added", entry);
+            }
+        }
+    }
+}
+
+fn running_ctl(
+    state: &SharedProxy,
+    campaign_id: i64,
+) -> Result<Arc<crate::intruder::RunControl>, String> {
+    state
+        .intruder_runs
+        .lock()
+        .get(&campaign_id)
+        .cloned()
+        .ok_or_else(|| "no active attack for this campaign".to_string())
+}
+
+#[tauri::command]
+pub fn intruder_campaign_new(
+    state: State<'_, SharedProxy>,
+    raw: String,
+    url_hint: Option<String>,
+    name: Option<String>,
+) -> Result<i64, String> {
+    let db = db_of(&state)?;
+    let existing = db.list_intruder_campaigns()?.len() as i64 + 1;
+    let name = name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| format!("Campaign {existing}"));
+    // Burp-style: auto-detect insertion points when a request arrives
+    let req_raw = crate::intruder::auto_positions(&raw);
+    db.create_intruder_campaign(&name, "sniper", &req_raw, url_hint.as_deref())
+}
+
+#[tauri::command]
+pub fn intruder_campaign_list(
+    state: State<'_, SharedProxy>,
+) -> Result<Vec<crate::db::IntruderCampaignSummary>, String> {
+    db_of(&state)?.list_intruder_campaigns()
+}
+
+fn campaign_state_json(state: &SharedProxy, campaign_id: i64, status: &str) -> serde_json::Value {
+    if let Some(ctl) = state.intruder_runs.lock().get(&campaign_id) {
+        let phase = if ctl.paused.load(Ordering::SeqCst) {
+            "paused"
+        } else {
+            "running"
+        };
+        return ctl.snapshot(campaign_id, phase);
+    }
+    let done = !matches!(status, "running" | "paused");
+    serde_json::json!({
+        "campaign_id": campaign_id, "status": status, "sent": 0, "total": 0,
+        "errors": 0, "done": done, "elapsed_ms": 0, "rps": 0.0
+    })
+}
+
+
+#[tauri::command]
+pub fn intruder_campaign_get(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    let db = db_of(&state)?;
+    let c = db
+        .get_intruder_campaign(campaign_id)?
+        .ok_or("campaign not found")?;
+    let payloads = db.list_intruder_payload_sets(campaign_id)?;
+    let st = campaign_state_json(&state, campaign_id, &c.status);
+    Ok(serde_json::json!({
+        "campaign": c,
+        "payloads": payloads,
+        "state": st,
+    }))
+}
+
+#[tauri::command]
+pub fn intruder_campaign_save(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+    name: String,
+    attack_type: String,
+    req_raw: String,
+    url_hint: Option<String>,
+    follow: bool,
+    set_map: Vec<i64>,
+    threads: i64,
+    delay_ms: i64,
+    max_requests: i64,
+    extractors: Vec<ExtractorInput>,
+) -> Result<(), String> {
+    if !ATTACK_TYPES.contains(&attack_type.as_str()) {
+        return Err(format!("unknown attack type {attack_type}"));
+    }
+    if req_raw.trim().is_empty() {
+        return Err("request is empty".into());
+    }
+    validate_extractors(&extractors)?;
+    let db = db_of(&state)?;
+    if state.intruder_runs.lock().contains_key(&campaign_id) {
+        return Err("stop the running attack before editing the campaign".into());
+    }
+    let mut c = db
+        .get_intruder_campaign(campaign_id)?
+        .ok_or("campaign not found")?;
+    if !name.trim().is_empty() {
+        c.name = name;
+    }
+    c.attack_type = attack_type;
+    c.req_raw = req_raw;
+    c.url_hint = url_hint.filter(|u| !u.is_empty());
+    c.follow = follow;
+    let map: Vec<usize> = set_map.iter().map(|v| (*v).max(0) as usize).collect();
+    c.set_map = serde_json::to_string(&map).map_err(|e| e.to_string())?;
+    c.threads = threads.clamp(1, 64);
+    c.delay_ms = delay_ms.clamp(0, 60_000);
+    c.max_requests = max_requests.clamp(0, 10_000_000);
+    c.extractors = serde_json::to_string(&extractors).map_err(|e| e.to_string())?;
+    db.update_intruder_campaign(&c)
+}
+
+#[tauri::command]
+pub fn intruder_campaign_delete(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<(), String> {
+    if state.intruder_runs.lock().contains_key(&campaign_id) {
+        return Err("stop the attack before deleting the campaign".into());
+    }
+    db_of(&state)?.delete_intruder_campaign(campaign_id)
+}
+
+#[tauri::command]
+pub fn intruder_positions_auto(req_raw: String) -> Result<String, String> {
+    Ok(crate::intruder::auto_positions(&req_raw))
+}
+
+#[tauri::command]
+pub fn intruder_payloads_save(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+    sets: Vec<PayloadSetInput>,
+) -> Result<(), String> {
+    for s in &sets {
+        if s.index < 0 || s.index > 7 {
+            return Err("a campaign supports payload sets 1-8".into());
+        }
+        if !matches!(s.kind.as_str(), "list" | "numbers") {
+            return Err(format!("unknown payload set kind \"{}\"", s.kind));
+        }
+        if s.kind == "numbers" && (s.start.is_none() || s.end.is_none()) {
+            return Err(format!(
+                "payload set {} needs start and end values",
+                s.index + 1
+            ));
+        }
+        validate_processor_kinds(&s.processors)?;
+    }
+    let db = db_of(&state)?;
+    if state.intruder_runs.lock().contains_key(&campaign_id) {
+        return Err("stop the running attack before editing payloads".into());
+    }
+    if db.get_intruder_campaign(campaign_id)?.is_none() {
+        return Err("campaign not found".into());
+    }
+    db.clear_intruder_payloads(campaign_id)?;
+    for s in sets {
+        let procs = serde_json::to_string(&s.processors).map_err(|e| e.to_string())?;
+        db.save_intruder_payload_set(
+            campaign_id,
+            s.index,
+            &s.name,
+            &s.kind,
+            &s.items,
+            s.start,
+            s.end,
+            s.step,
+            &procs,
+        )?;
+    }
+    Ok(())
+}
+
+/// Build the job, arm the run control, and spawn the attack loop.
+/// Public (not a command) so the e2e suite can drive it without a Tauri AppHandle.
+pub async fn start_intruder_attack(
+    app: Option<AppHandle>,
+    state: &SharedProxy,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    if state.intruder_runs.lock().contains_key(&campaign_id) {
+        return Err("an attack is already running for this campaign".into());
+    }
+    let db = db_of(state)?;
+    let c = db
+        .get_intruder_campaign(campaign_id)?
+        .ok_or("campaign not found")?;
+    let positions = crate::intruder::parse_positions(&c.req_raw);
+    if positions.is_empty() {
+        return Err(
+            "no insertion points - use Auto-detect or Add marker before starting".into(),
+        );
+    }
+    let mut sets_db = db.list_intruder_payload_sets(campaign_id)?;
+    if sets_db.is_empty() {
+        return Err("no payload sets - open Payloads and add payloads first".into());
+    }
+    sets_db.sort_by_key(|s| s.set_index);
+    let sets = crate::intruder::processed_sets(&sets_db)?;
+    let set_map: Vec<usize> = serde_json::from_str(&c.set_map).unwrap_or_default();
+    let attack = crate::intruder::AttackType::parse(&c.attack_type);
+    let mut total = crate::intruder::plan_total(attack, &sets, positions.len(), &set_map);
+    if c.max_requests > 0 {
+        total = total.min(c.max_requests as usize);
+    }
+    if total == 0 {
+        return Err("attack would send 0 requests - check payload set sizes".into());
+    }
+    let extractors = crate::intruder::compile_extractors(&c.extractors);
+    let declared: Vec<ExtractorInput> = serde_json::from_str(&c.extractors).unwrap_or_default();
+    if extractors.len() != declared.len() {
+        return Err("one or more extractor patterns are invalid".into());
+    }
+
+    db.clear_intruder_results(campaign_id)?;
+    db.set_intruder_campaign_status(campaign_id, "running")?;
+
+    let ctl = Arc::new(crate::intruder::RunControl::new(total));
+    state
+        .intruder_runs
+        .lock()
+        .insert(campaign_id, ctl.clone());
+
+    let job = crate::intruder::AttackJob {
+        campaign_id,
+        req_raw: c.req_raw,
+        url_hint: c.url_hint,
+        follow: c.follow,
+        attack,
+        sets,
+        positions,
+        set_map,
+        threads: c.threads as usize,
+        delay: Duration::from_millis(c.delay_ms as u64),
+        extractors,
+    };
+    log_intruder(
+        app.as_ref(),
+        state,
+        "info",
+        &format!(
+            "Intruder attack started on {} ({}) - {} requests, {} threads",
+            campaign_id, c.name, total, job.threads
+        ),
+    );
+    let st = state.clone();
+    tokio::spawn(crate::intruder::run_attack(app, st, job, ctl.clone()));
+    Ok(ctl.snapshot(campaign_id, "running"))
+}
+
+#[tauri::command]
+pub async fn intruder_start(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    start_intruder_attack(Some(app), state.inner(), campaign_id).await
+}
+
+#[tauri::command]
+pub fn intruder_pause(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    let ctl = running_ctl(&state, campaign_id)?;
+    ctl.pause();
+    db_of(&state)?.set_intruder_campaign_status(campaign_id, "paused")?;
+    let snap = ctl.snapshot(campaign_id, "paused");
+    emit_progress(Some(&app), &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn intruder_resume(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    let ctl = running_ctl(&state, campaign_id)?;
+    ctl.resume();
+    db_of(&state)?.set_intruder_campaign_status(campaign_id, "running")?;
+    let snap = ctl.snapshot(campaign_id, "running");
+    emit_progress(Some(&app), &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn intruder_stop(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    let ctl = running_ctl(&state, campaign_id)?;
+    ctl.resume(); // a paused loop must see the cancel flag
+    ctl.cancel.store(true, Ordering::SeqCst);
+    let snap = ctl.snapshot(campaign_id, "running"); // still draining in-flight requests
+    emit_progress(Some(&app), &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn intruder_state(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<serde_json::Value, String> {
+    if let Some(ctl) = state.intruder_runs.lock().get(&campaign_id) {
+        let phase = if ctl.paused.load(Ordering::SeqCst) {
+            "paused"
+        } else {
+            "running"
+        };
+        return Ok(ctl.snapshot(campaign_id, phase));
+    }
+    let db = db_of(&state)?;
+    let c = db
+        .get_intruder_campaign(campaign_id)?
+        .ok_or("campaign not found")?;
+    Ok(campaign_state_json(&state, campaign_id, &c.status))
+}
+
+#[tauri::command]
+pub fn intruder_results_list(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let db = db_of(&state)?;
+    let rows = db.list_intruder_results(
+        campaign_id,
+        offset.unwrap_or(0).max(0),
+        limit.unwrap_or(200).clamp(1, 1000),
+    )?;
+    let total = db.count_intruder_results(campaign_id)?;
+    Ok(serde_json::json!({ "rows": rows, "total": total }))
+}
+
+#[tauri::command]
+pub fn intruder_result_get(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+    seq: i64,
+) -> Result<Option<crate::db::IntruderResultFull>, String> {
+    db_of(&state)?.get_intruder_result(campaign_id, seq)
+}
+
+#[tauri::command]
+pub fn intruder_results_clear(
+    state: State<'_, SharedProxy>,
+    campaign_id: i64,
+) -> Result<usize, String> {
+    if state.intruder_runs.lock().contains_key(&campaign_id) {
+        return Err("stop the attack before clearing results".into());
+    }
+    db_of(&state)?.clear_intruder_results(campaign_id)
 }
 
 #[cfg(test)]
@@ -1104,5 +1558,48 @@ mod tests {
         assert_eq!(hits[0].source, "history");
         assert_eq!(hits[1].source, "log");
         assert_eq!(hits[1].tab, "logger");
+    }
+
+    #[test]
+    fn intruder_validators_reject_bad_input() {
+        let bad_re = vec![ExtractorInput {
+            name: "t".into(),
+            pattern: "([".into(),
+        }];
+        let err = validate_extractors(&bad_re).unwrap_err();
+        assert!(err.contains("extractor"), "{err}");
+        assert!(validate_extractors(&[]).is_ok());
+        let err = validate_extractors(&vec![ExtractorInput {
+            name: "  ".into(),
+            pattern: "x".into(),
+        }])
+        .unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+
+        let bad_proc = vec![ProcessorInput {
+            kind: "nope".into(),
+            a: None,
+            b: None,
+        }];
+        assert!(validate_processor_kinds(&bad_proc).is_err());
+        assert!(
+            validate_processor_kinds(&vec![ProcessorInput {
+                kind: "md5".into(),
+                a: None,
+                b: None
+            }])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn campaign_state_json_idle_reports_done() {
+        let sp: SharedProxy = Arc::new(crate::proxy::ProxyState::default());
+        let idle = campaign_state_json(&sp, 3, "draft");
+        assert_eq!(idle["campaign_id"], 3);
+        assert_eq!(idle["status"], "draft");
+        assert_eq!(idle["done"], true);
+        let stale = campaign_state_json(&sp, 3, "running");
+        assert_eq!(stale["done"], false);
     }
 }

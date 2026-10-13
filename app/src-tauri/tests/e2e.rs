@@ -1,8 +1,9 @@
 use rustls::client::danger::ServerCertVerifier;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{ServerName, UnixTime};
-use std::sync::atomic::Ordering;
-use webproxy_toolkit_lib::{ca, proxy};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use webproxy_toolkit_lib::{ca, commands, db, proxy};
 
 fn init_crypto() {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -173,4 +174,183 @@ fn reload_path_signs_valid_leaf() {
             UnixTime::now(),
         )
         .expect("leaf signed by reloaded CA must verify against on-disk CA cert");
+}
+
+// -------------------------------------------------------------- intruder e2e
+
+struct EchoServer {
+    port: u16,
+    hits: Arc<AtomicUsize>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+/// Minimal HTTP server: counts requests, replies 200 PONG, closes the socket.
+async fn echo_server() -> EchoServer {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind echo server");
+    let port = listener.local_addr().expect("addr").port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = hits.clone();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let h = h.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                h.fetch_add(1, Ordering::SeqCst);
+                let body = "PONG";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut sock, resp.as_bytes()).await;
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut sock).await;
+            });
+        }
+    });
+    EchoServer { port, hits, handle }
+}
+
+fn intruder_state(name: &str) -> proxy::SharedProxy {
+    let state = proxy::SharedProxy::default();
+    let path = std::env::temp_dir().join(format!(
+        "wpt_intruder_{}_{}.db",
+        std::process::id(),
+        name
+    ));
+    let _ = std::fs::remove_file(&path);
+    let database = db::open(&path).expect("open intruder db");
+    *state.db.write() = Some(database);
+    state
+}
+
+fn make_campaign(
+    state: &proxy::SharedProxy,
+    name: &str,
+    raw: &str,
+    items: &str,
+    threads: i64,
+    delay_ms: i64,
+) -> i64 {
+    let database = state.db.read().clone().expect("db open");
+    let cid = database
+        .create_intruder_campaign(name, "sniper", raw, None)
+        .expect("campaign");
+    database
+        .save_intruder_payload_set(cid, 0, "set 1", "list", items, None, None, None, "[]")
+        .expect("payload set");
+    let mut c = database
+        .get_intruder_campaign(cid)
+        .expect("get")
+        .expect("exists");
+    c.threads = threads;
+    c.delay_ms = delay_ms;
+    database.update_intruder_campaign(&c).expect("update");
+    cid
+}
+
+async fn wait_for_attack_end(state: &proxy::SharedProxy, cid: i64) {
+    for _ in 0..500 {
+        if !state.intruder_runs.lock().contains_key(&cid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("attack did not finish within 10s");
+}
+
+#[tokio::test]
+async fn intruder_sniper_attack_completes_against_local_server() {
+    let server = echo_server().await;
+    let state = intruder_state("sniper");
+    let raw = format!(
+        "GET http://127.0.0.1:{p}/attack?x=\u{a7}alpha\u{a7} HTTP/1.1\r\nHost: 127.0.0.1:{p}\r\nConnection: close\r\n\r\n",
+        p = server.port
+    );
+    let cid = make_campaign(&state, "sniper", &raw, "one\ntwo\nthree", 2, 0);
+
+    let snap = commands::start_intruder_attack(None, &state, cid)
+        .await
+        .expect("start attack");
+    assert_eq!(snap["total"], 3, "3 payloads, 1 position");
+
+    wait_for_attack_end(&state, cid).await;
+
+    let database = state.db.read().clone().expect("db open");
+    assert_eq!(database.count_intruder_results(cid).expect("count"), 3);
+    assert_eq!(server.hits.load(Ordering::SeqCst), 3, "one hit per payload");
+
+    let rows = database.list_intruder_results(cid, 0, 10).expect("rows");
+    let combos: Vec<String> = rows.iter().map(|r| r.combo.clone()).collect();
+    for payload in ["one", "two", "three"] {
+        assert!(
+            combos.iter().any(|c| c.contains(payload)),
+            "missing payload {payload} in {combos:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r.status == Some(200)),
+            "every result should be 200"
+        );
+    }
+    let full = database
+        .get_intruder_result(cid, 0)
+        .expect("detail")
+        .expect("row 0");
+    assert!(full.req_raw.contains("one") || full.req_raw.contains("two"));
+    assert!(
+        full.resp_raw.unwrap_or_default().contains("PONG"),
+        "response should be stored"
+    );
+
+    let c = database
+        .get_intruder_campaign(cid)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(c.status, "done", "campaign marked done");
+    server.handle.abort();
+}
+
+#[tokio::test]
+async fn intruder_stop_mid_attack_leaves_stopped_status() {
+    let server = echo_server().await;
+    let state = intruder_state("stop");
+    let items = (1..=50)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let raw = format!(
+        "GET http://127.0.0.1:{p}/attack?x=\u{a7}1\u{a7} HTTP/1.1\r\nHost: 127.0.0.1:{p}\r\nConnection: close\r\n\r\n",
+        p = server.port
+    );
+    let cid = make_campaign(&state, "stop", &raw, &items, 1, 30);
+
+    commands::start_intruder_attack(None, &state, cid)
+        .await
+        .expect("start attack");
+    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    {
+        let runs = state.intruder_runs.lock();
+        let ctl = runs.get(&cid).expect("attack should be running");
+        ctl.cancel.store(true, Ordering::SeqCst);
+    }
+
+    wait_for_attack_end(&state, cid).await;
+
+    let database = state.db.read().clone().expect("db open");
+    let total = database.count_intruder_results(cid).expect("count");
+    assert!(
+        total >= 1 && total < 50,
+        "stopped early with {total}/50 results"
+    );
+    let c = database
+        .get_intruder_campaign(cid)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(c.status, "stopped", "campaign marked stopped");
+    server.handle.abort();
 }

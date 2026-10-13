@@ -71,6 +71,84 @@ pub struct WsFrame {
     pub payload: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct IntruderCampaign {
+    pub id: i64,
+    pub name: String,
+    pub attack_type: String, // sniper | battering_ram | pitchfork | cluster_bomb
+    pub req_raw: String,     // may contain §…§ position markers
+    pub url_hint: Option<String>,
+    pub follow: bool,
+    pub set_map: String,     // JSON int[]: payload set index per position
+    pub threads: i64,
+    pub delay_ms: i64,
+    pub max_requests: i64,   // 0 = unlimited
+    pub extractors: String,  // JSON [{name, pattern}]
+    pub status: String,      // draft | running | paused | done | stopped | error
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct IntruderCampaignSummary {
+    pub id: i64,
+    pub name: String,
+    pub attack_type: String,
+    pub status: String,
+    pub positions: i64,
+    pub updated_at: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct IntruderPayloadSet {
+    pub id: i64,
+    pub campaign_id: i64,
+    pub set_index: i64,
+    pub name: String,
+    pub kind: String, // list | numbers
+    pub items: String,
+    pub start_i: Option<i64>,
+    pub end_i: Option<i64>,
+    pub step_i: Option<i64>,
+    pub processors: String, // JSON [{kind, a, b}]
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct IntruderResultRow {
+    pub seq: i64,
+    pub combo: String, // JSON string[]
+    pub status: Option<i64>,
+    pub resp_len: i64,
+    pub time_ms: i64,
+    pub error: Option<String>,
+    pub extracted: String, // JSON {name: value}
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct IntruderResultFull {
+    pub seq: i64,
+    pub combo: String,
+    pub status: Option<i64>,
+    pub resp_len: i64,
+    pub time_ms: i64,
+    pub error: Option<String>,
+    pub req_raw: String,
+    pub resp_raw: Option<String>,
+    pub extracted: String,
+}
+
+pub struct NewIntruderResult {
+    pub seq: i64,
+    pub combo: String,
+    pub status: Option<i64>,
+    pub resp_len: i64,
+    pub time_ms: i64,
+    pub error: Option<String>,
+    pub req_raw: String,
+    pub resp_raw: Option<String>,
+    pub extracted: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     blob_dir: PathBuf,
@@ -694,6 +772,328 @@ impl Db {
         frames.reverse();
         Ok(frames)
     }
+
+    // ---- Intruder ----
+
+    pub fn create_intruder_campaign(
+        &self,
+        name: &str,
+        attack_type: &str,
+        req_raw: &str,
+        url_hint: Option<&str>,
+    ) -> Result<i64, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO intruder_campaigns
+             (name, attack_type, req_raw, url_hint, follow, set_map, threads, delay_ms,
+              max_requests, extractors, status, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,0,'[]',4,0,0,'[]','draft',?5,?5)",
+            params![name, attack_type, req_raw, url_hint, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Light rows for campaign tabs (no request text).
+    pub fn list_intruder_campaigns(&self) -> Result<Vec<IntruderCampaignSummary>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, attack_type, req_raw, status, updated_at
+                 FROM intruder_campaigns ORDER BY updated_at DESC, id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                let req_raw: String = r.get(3)?;
+                Ok(IntruderCampaignSummary {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    attack_type: r.get(2)?,
+                    positions: (req_raw.matches('§').count() / 2) as i64,
+                    status: r.get(4)?,
+                    updated_at: r.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_intruder_campaign(&self, id: i64) -> Result<Option<IntruderCampaign>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, name, attack_type, req_raw, url_hint, follow, set_map, threads,
+                    delay_ms, max_requests, extractors, status, created_at, updated_at
+             FROM intruder_campaigns WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(IntruderCampaign {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    attack_type: r.get(2)?,
+                    req_raw: r.get(3)?,
+                    url_hint: r.get(4)?,
+                    follow: r.get::<_, i64>(5)? != 0,
+                    set_map: r.get(6)?,
+                    threads: r.get(7)?,
+                    delay_ms: r.get(8)?,
+                    max_requests: r.get(9)?,
+                    extractors: r.get(10)?,
+                    status: r.get(11)?,
+                    created_at: r.get(12)?,
+                    updated_at: r.get(13)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn update_intruder_campaign(&self, c: &IntruderCampaign) -> Result<(), String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE intruder_campaigns SET name=?1, attack_type=?2, req_raw=?3, url_hint=?4,
+              follow=?5, set_map=?6, threads=?7, delay_ms=?8, max_requests=?9, extractors=?10,
+              status=?11, updated_at=?12 WHERE id=?13",
+            params![
+                c.name,
+                c.attack_type,
+                c.req_raw,
+                c.url_hint,
+                c.follow as i64,
+                c.set_map,
+                c.threads,
+                c.delay_ms,
+                c.max_requests,
+                c.extractors,
+                c.status,
+                now,
+                c.id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn set_intruder_campaign_status(&self, id: i64, status: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE intruder_campaigns SET status=?1, updated_at=?2 WHERE id=?3",
+            params![status, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_intruder_campaign(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM intruder_results WHERE campaign_id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM intruder_payloads WHERE campaign_id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM intruder_campaigns WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Crash recovery: anything left `running`/`paused` from a previous session becomes `stopped`.
+    pub fn reset_intruder_running(&self) -> Result<usize, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE intruder_campaigns SET status='stopped', updated_at=?1
+             WHERE status IN ('running','paused')",
+            params![now],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn save_intruder_payload_set(
+        &self,
+        campaign_id: i64,
+        set_index: i64,
+        name: &str,
+        kind: &str,
+        items: &str,
+        start_i: Option<i64>,
+        end_i: Option<i64>,
+        step_i: Option<i64>,
+        processors: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO intruder_payloads
+               (campaign_id, set_index, name, kind, items, start_i, end_i, step_i, processors)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+             ON CONFLICT(campaign_id, set_index) DO UPDATE SET
+               name=excluded.name, kind=excluded.kind, items=excluded.items,
+               start_i=excluded.start_i, end_i=excluded.end_i, step_i=excluded.step_i,
+               processors=excluded.processors",
+            params![campaign_id, set_index, name, kind, items, start_i, end_i, step_i, processors],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn clear_intruder_payloads(&self, campaign_id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM intruder_payloads WHERE campaign_id = ?1",
+            params![campaign_id],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn list_intruder_payload_sets(
+        &self,
+        campaign_id: i64,
+    ) -> Result<Vec<IntruderPayloadSet>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, campaign_id, set_index, name, kind, items, start_i, end_i, step_i, processors
+                 FROM intruder_payloads WHERE campaign_id = ?1 ORDER BY set_index",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![campaign_id], |r| {
+                Ok(IntruderPayloadSet {
+                    id: r.get(0)?,
+                    campaign_id: r.get(1)?,
+                    set_index: r.get(2)?,
+                    name: r.get(3)?,
+                    kind: r.get(4)?,
+                    items: r.get(5)?,
+                    start_i: r.get(6)?,
+                    end_i: r.get(7)?,
+                    step_i: r.get(8)?,
+                    processors: r.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Batch insert (single transaction) — called from the attack engine per join batch.
+    pub fn insert_intruder_results(
+        &self,
+        campaign_id: i64,
+        rows: &[NewIntruderResult],
+    ) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO intruder_results
+                       (campaign_id, seq, combo, status, resp_len, time_ms, error,
+                        req_raw, resp_raw, extracted, created_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                )
+                .map_err(|e| e.to_string())?;
+            for r in rows {
+                stmt.execute(params![
+                    campaign_id,
+                    r.seq,
+                    r.combo,
+                    r.status,
+                    r.resp_len,
+                    r.time_ms,
+                    r.error,
+                    r.req_raw,
+                    r.resp_raw,
+                    r.extracted,
+                    now
+                ])
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    /// Attack-order rows (oldest first) without the message bodies.
+    pub fn list_intruder_results(
+        &self,
+        campaign_id: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<IntruderResultRow>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT seq, combo, status, resp_len, time_ms, error, extracted
+                 FROM intruder_results WHERE campaign_id = ?1 ORDER BY seq LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![campaign_id, limit, offset], |r| {
+                Ok(IntruderResultRow {
+                    seq: r.get(0)?,
+                    combo: r.get(1)?,
+                    status: r.get(2)?,
+                    resp_len: r.get(3)?,
+                    time_ms: r.get(4)?,
+                    error: r.get(5)?,
+                    extracted: r.get(6)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn count_intruder_results(&self, campaign_id: i64) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT COUNT(*) FROM intruder_results WHERE campaign_id = ?1",
+            params![campaign_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn get_intruder_result(
+        &self,
+        campaign_id: i64,
+        seq: i64,
+    ) -> Result<Option<IntruderResultFull>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT seq, combo, status, resp_len, time_ms, error, req_raw, resp_raw, extracted
+             FROM intruder_results WHERE campaign_id = ?1 AND seq = ?2",
+            params![campaign_id, seq],
+            |r| {
+                Ok(IntruderResultFull {
+                    seq: r.get(0)?,
+                    combo: r.get(1)?,
+                    status: r.get(2)?,
+                    resp_len: r.get(3)?,
+                    time_ms: r.get(4)?,
+                    error: r.get(5)?,
+                    req_raw: r.get(6)?,
+                    resp_raw: r.get(7)?,
+                    extracted: r.get(8)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn clear_intruder_results(&self, campaign_id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM intruder_results WHERE campaign_id = ?1",
+            params![campaign_id],
+        )
+        .map_err(|e| e.to_string())
+    }
 }
 
 pub fn scope_matches(rule: &ScopeRule, host: &str, url: &str) -> bool {
@@ -879,5 +1279,133 @@ mod tests {
             vec!["p2", "p3", "p4"]
         );
         assert!(db.list_ws_frames(conn, 500).unwrap().len() == 5);
+    }
+
+    #[test]
+    fn intruder_campaign_crud_and_status_reset() {
+        let db = temp_db("invcamp");
+        let id = db
+            .create_intruder_campaign(
+                "login",
+                "sniper",
+                "POST /login HTTP/1.1\r\n\r\nuser=§admin§",
+                Some("http://shop.test/login"),
+            )
+            .unwrap();
+        let c = db.get_intruder_campaign(id).unwrap().expect("campaign");
+        assert_eq!(c.name, "login");
+        assert_eq!(c.attack_type, "sniper");
+        assert_eq!(c.status, "draft");
+        assert_eq!(c.threads, 4);
+        assert!(!c.follow);
+
+        let summaries = db.list_intruder_campaigns().unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].positions, 1);
+
+        db.set_intruder_campaign_status(id, "running").unwrap();
+        assert_eq!(
+            db.get_intruder_campaign(id).unwrap().unwrap().status,
+            "running"
+        );
+        // crash recovery
+        assert_eq!(db.reset_intruder_running().unwrap(), 1);
+        assert_eq!(
+            db.get_intruder_campaign(id).unwrap().unwrap().status,
+            "stopped"
+        );
+
+        let mut c = db.get_intruder_campaign(id).unwrap().unwrap();
+        c.name = "login2".into();
+        c.threads = 8;
+        c.delay_ms = 50;
+        c.set_map = "[0,1]".into();
+        db.update_intruder_campaign(&c).unwrap();
+        let c2 = db.get_intruder_campaign(id).unwrap().unwrap();
+        assert_eq!(c2.name, "login2");
+        assert_eq!(c2.threads, 8);
+        assert_eq!(c2.set_map, "[0,1]");
+
+        db.delete_intruder_campaign(id).unwrap();
+        assert!(db.get_intruder_campaign(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn intruder_payload_sets_upsert_by_set_index() {
+        let db = temp_db("invsets");
+        let id = db
+            .create_intruder_campaign("c", "sniper", "GET / HTTP/1.1\r\n\r\n", None)
+            .unwrap();
+        db.save_intruder_payload_set(id, 0, "users", "list", "alice\nbob", None, None, None, "[]")
+            .unwrap();
+        db.save_intruder_payload_set(id, 1, "ids", "numbers", "", Some(1), Some(5), Some(2), "[]")
+            .unwrap();
+        // upsert set 0 again
+        db.save_intruder_payload_set(
+            id,
+            0,
+            "users",
+            "list",
+            "alice\nbob\ncarol",
+            None,
+            None,
+            None,
+            r#"[{"kind":"md5"}]"#,
+        )
+        .unwrap();
+        let sets = db.list_intruder_payload_sets(id).unwrap();
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0].items, "alice\nbob\ncarol");
+        assert_eq!(sets[0].processors, r#"[{"kind":"md5"}]"#);
+        assert_eq!(sets[1].start_i, Some(1));
+        assert_eq!(sets[1].step_i, Some(2));
+    }
+
+    #[test]
+    fn intruder_results_paging_count_and_cascade() {
+        let db = temp_db("invres");
+        let id = db
+            .create_intruder_campaign("c", "sniper", "GET / HTTP/1.1\r\n\r\n", None)
+            .unwrap();
+        let rows: Vec<NewIntruderResult> = (0..7)
+            .map(|i| NewIntruderResult {
+                seq: i,
+                combo: format!(r#"["p{i}"]"#),
+                status: Some(200 + i),
+                resp_len: 100 + i,
+                time_ms: 10 + i,
+                error: None,
+                req_raw: format!("GET /p{i} HTTP/1.1\r\n\r\n"),
+                resp_raw: Some(format!("HTTP/1.1 {} OK\r\n\r\n", 200 + i)),
+                extracted: format!(r#"{{"tok":"t{i}"}}"#),
+            })
+            .collect();
+        db.insert_intruder_results(id, &rows).unwrap();
+        assert_eq!(db.count_intruder_results(id).unwrap(), 7);
+
+        let page = db.list_intruder_results(id, 0, 3).unwrap();
+        assert_eq!(
+            page.iter().map(|r| r.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        let page2 = db.list_intruder_results(id, 3, 3).unwrap();
+        assert_eq!(page2.iter().map(|r| r.seq).collect::<Vec<_>>(), vec![3, 4, 5]);
+
+        let full = db.get_intruder_result(id, 4).unwrap().expect("row");
+        assert_eq!(full.req_raw, "GET /p4 HTTP/1.1\r\n\r\n");
+        assert!(full.resp_raw.unwrap().contains("204"));
+        assert_eq!(full.extracted, r#"{"tok":"t4"}"#);
+        assert!(db.get_intruder_result(id, 99).unwrap().is_none());
+
+        assert_eq!(db.clear_intruder_results(id).unwrap(), 7);
+        assert_eq!(db.count_intruder_results(id).unwrap(), 0);
+
+        // cascade on campaign delete
+        db.insert_intruder_results(id, &rows).unwrap();
+        db.save_intruder_payload_set(id, 0, "s", "list", "a", None, None, None, "[]")
+            .unwrap();
+        db.delete_intruder_campaign(id).unwrap();
+        assert_eq!(db.count_intruder_results(id).unwrap(), 0);
+        assert!(db.list_intruder_payload_sets(id).unwrap().is_empty());
     }
 }

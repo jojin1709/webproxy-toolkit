@@ -96,7 +96,35 @@ def run():
         page.locator('button[title="Settings"]').click()
         page.wait_for_timeout(450)
         shot(page, "13-settings")
-        tab(page, "Intruder"); shot(page, "14-placeholder")
+
+        # ---- Phase 3: Intruder ----
+        tab(page, "Intruder")
+        page.wait_for_timeout(400)
+        shot(page, "14-intruder-positions")
+        sub(page, "Payloads")
+        shot(page, "34-intruder-payloads")
+        sub(page, "Extractors")
+        shot(page, "35-intruder-extractors")
+        sub(page, "Results")
+        stage[0] = "intruder result row"
+        rrows = page.locator(".intruder-results tbody tr")
+        if rrows.count() > 2:
+            rrows.nth(1).click()
+            page.wait_for_timeout(400)
+        shot(page, "36-intruder-results")
+        stage[0] = "intruder attack run"
+        page.locator("#panel-intruder .rtab", has_text="IDOR probe").first.click()
+        page.wait_for_timeout(350)
+        sub(page, "Positions")
+        page.get_by_role("button", name="Auto-detect").click()
+        page.wait_for_timeout(300)
+        page.locator("#panel-intruder .btn.send").first.click()
+        page.wait_for_timeout(200)
+        sub(page, "Results")
+        page.wait_for_timeout(600)
+        shot(page, "37-intruder-running")
+        page.wait_for_timeout(2500)
+        shot(page, "38-intruder-attack-done")
 
         # ---- Group A2: Phase 2a tools ----
         tab(page, "Proxy")

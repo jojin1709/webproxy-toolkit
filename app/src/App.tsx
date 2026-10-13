@@ -15,6 +15,7 @@ import SettingsPanel from "./panels/SettingsPanel";
 import DashboardPanel from "./panels/DashboardPanel";
 import ComparerPanel from "./panels/ComparerPanel";
 import SequencerPanel from "./panels/SequencerPanel";
+import IntruderPanel from "./panels/IntruderPanel";
 import LoggerPanel from "./panels/LoggerPanel";
 import { emptyStatus, ProxyStatus, SearchHit, TabId, Transfer } from "./types";
 
@@ -165,16 +166,7 @@ export default function App() {
             <DashboardPanel status={status} setStatus={setStatus} setToast={setToast} />
           )}
 
-          {tab === "intruder" && (
-            <Placeholder
-              id="panel-intruder"
-              title="Intruder"
-              description="Attack positions (sniper, battering ram, pitchfork, cluster bomb), payload sets with processors, resource pool and results arrive in Phase 3."
-              staged={
-                toIntruder ? "1 request staged from history — arriving with Phase 3." : undefined
-              }
-            />
-          )}
+          {tab === "intruder" && <IntruderPanel incoming={toIntruder} setToast={setToast} />}
           {tab === "comparer" && <ComparerPanel incoming={toComparer} setToast={setToast} />}
           {tab === "sequencer" && <SequencerPanel setToast={setToast} />}
           {tab === "extensions" && (

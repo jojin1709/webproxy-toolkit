@@ -56,6 +56,7 @@ pub struct ProxyState {
     pub scope: Mutex<Vec<ScopeRule>>,
     pub match_replace: Mutex<Vec<MatchRule>>,
     pub app_handle: parking_lot::RwLock<Option<AppHandle>>,
+    pub intruder_runs: crate::intruder::IntruderRuns,
 }
 
 impl Default for ProxyState {
@@ -74,12 +75,17 @@ impl Default for ProxyState {
             scope: Mutex::new(Vec::new()),
             match_replace: Mutex::new(Vec::new()),
             app_handle: parking_lot::RwLock::new(None),
+            intruder_runs: crate::intruder::IntruderRuns::default(),
         }
     }
 }
 
 pub fn hydrate(state: &SharedProxy, database: &Arc<Db>) {
     *state.db.write() = Some(database.clone());
+    // crash recovery: attacks cannot survive a restart
+    if let Err(e) = database.reset_intruder_running() {
+        eprintln!("intruder status reset failed: {e}");
+    }
     if let Ok(rules) = database.list_scope() {
         *state.scope.lock() = rules;
     }

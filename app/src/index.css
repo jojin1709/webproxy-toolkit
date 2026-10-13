@@ -1837,3 +1837,157 @@ table.kv td:first-child {
   justify-content: center;
   padding: var(--space-2);
 }
+
+/* ---------- phase 3: intruder ---------- */
+
+#panel-intruder .rtab-status {
+  background: var(--color-surface-3);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  color: var(--color-text-muted);
+}
+
+#panel-intruder .rtab-status.err {
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+#panel-intruder .btn.danger.armed {
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+  border-color: var(--color-danger);
+}
+
+.intruder-num {
+  width: 62px;
+  flex: 0 0 auto;
+}
+
+.intruder-err {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.intruder-progress {
+  width: 130px;
+  height: 10px;
+  accent-color: var(--color-accent);
+}
+
+.intruder-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  resize: none;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  padding: 8px 10px;
+}
+
+.intruder-editor:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+textarea.intruder-payloads {
+  height: auto;
+  min-height: 130px;
+  resize: vertical;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border-input);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+textarea.intruder-payloads:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.intruder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  font-size: var(--text-sm);
+}
+
+.intruder-row .k {
+  color: var(--color-text-muted);
+  min-width: 90px;
+}
+
+.intruder-row .k.mono {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intruder-row .chip {
+  flex: 0 0 auto;
+}
+
+.pane-body .intruder-subtitle {
+  margin-top: 14px;
+  background: transparent;
+  border-top: 1px solid var(--color-border);
+  border-bottom: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.intruder-setlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.intruder-setcard {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+.intruder-setcard.active {
+  border-color: var(--color-accent);
+  background: var(--color-surface-3);
+}
+
+.intruder-setcard-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.intruder-setcard-main:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.intruder-results td.ellipsis {
+  max-width: 220px;
+}

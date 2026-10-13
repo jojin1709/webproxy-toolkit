@@ -96,6 +96,16 @@ def run():
         tab(page, "Dashboard")
         audit(page, "dashboard-eventlog")
 
+        # intruder (Phase 3): positions / payloads / extractors / results
+        tab(page, "Intruder")
+        audit(page, "intruder-positions")
+        sub(page, "Payloads")
+        audit(page, "intruder-payloads")
+        sub(page, "Extractors")
+        audit(page, "intruder-extractors")
+        sub(page, "Results")
+        audit(page, "intruder-results")
+
         # search dialog (combobox/listbox/selected hit contrast)
         tab(page, "Proxy")
         page.locator('button[aria-label="Search"]').click()

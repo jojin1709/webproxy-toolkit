@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebProxy Toolkit — Burp-style security workbench, fully offline</title>
+  <meta name="description" content="WebProxy Toolkit is a Burp Suite–style web security workbench that runs entirely on your machine. MITM proxy, Repeater, Intruder, Scanner, Collaborator, Extensions — no license, no cloud, no telemetry." />
+  <link rel="icon" href="assets/favicon.ico" />
+  <link rel="icon" type="image/png" sizes="128x128" href="assets/icon.png" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===== Nav ===== -->
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top">
+        <img src="assets/icon.png" alt="WebProxy Toolkit logo" width="32" height="32" />
+        <span>WebProxy&nbsp;Toolkit</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#about">About</a>
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#status">Status</a>
+        <a href="#download">Download</a>
+        <a href="#developer">Developer</a>
+        <a class="gh" href="https://github.com/jojin1709/webproxy-toolkit" target="_blank" rel="noopener">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ===== Hero ===== -->
+  <section id="top" class="hero">
+    <div class="wrap hero-inner">
+      <img class="hero-logo" src="assets/icon.png" alt="WebProxy Toolkit" width="96" height="96" />
+      <h1>WebProxy Toolkit</h1>
+      <p class="tagline">A Burp Suite–style web security workbench that runs <em>entirely on your machine</em>.</p>
+
+      <div class="cta">
+        <a id="hero-download" class="btn btn-primary" href="#download" aria-describedby="hero-version">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span id="hero-download-label">Download for Windows</span>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/jojin1709/webproxy-toolkit" target="_blank" rel="noopener">View source</a>
+      </div>
+      <p id="hero-version" class="version-line">Fetching latest release…</p>
+
+      <div class="hero-shot">
+        <img src="screenshot-dashboard.png" alt="WebProxy Toolkit dashboard" loading="lazy" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== What's new ===== -->
+  <section class="whatsnew">
+    <div class="wrap">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>What's new</h2>
+          <span id="wn-badge" class="badge">Latest</span>
+        </div>
+        <div class="wn-meta">
+          <a id="wn-title" href="#" target="_blank" rel="noopener">Loading release…</a>
+          <span id="wn-date" class="muted"></span>
+        </div>
+        <div id="wn-notes" class="wn-notes"><p class="muted">Loading release notes…</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== About ===== -->
+  <section id="about" class="section">
+    <div class="wrap">
+      <h2 class="section-title">About WebProxy Toolkit</h2>
+      <div class="about-grid">
+        <div class="about-text">
+          <p><strong>WebProxy Toolkit</strong> is a desktop web-security workbench inspired by the workflow of Burp Suite, rebuilt from scratch as a modern <strong>Tauri + React + Rust</strong> app. It runs fully offline on your own machine.</p>
+          <p>It bundles a full interception proxy with a MITM CA, a site map and scope, a multi-tab Repeater, a position-and-payload Intruder, a passive + active Scanner with an issue framework, a Comparer, a Sequencer for token randomness, a Decoder, a persistent Logger, a local Collaborator for out-of-band testing, and an embedded JavaScript extension engine — all in one window.</p>
+          <p>Everything is stored locally in SQLite. There is no cloud sync, no account, and no external dependency at runtime.</p>
+        </div>
+        <aside class="about-facts">
+          <div class="fact"><span class="fact-k">Type</span><span class="fact-v">Desktop security workbench</span></div>
+          <div class="fact"><span class="fact-k">Stack</span><span class="fact-v">Tauri 2 · React · TypeScript · Rust</span></div>
+          <div class="fact"><span class="fact-k">Storage</span><span class="fact-v">Local SQLite</span></div>
+          <div class="fact"><span class="fact-k">Platform</span><span class="fact-v">Windows x64 (NSIS installer)</span></div>
+          <div class="fact"><span class="fact-k">License</span><span class="fact-v">BUSL-1.1 → AGPL-3.0 (2030)</span></div>
+        </aside>
+      </div>
+
+      <div class="topics">
+        <span class="topics-label">Topics</span>
+        <ul class="topic-list">
+          <li>security</li>
+          <li>web-security</li>
+          <li>penetration-testing</li>
+          <li>burp-suite-alternative</li>
+          <li>mitm-proxy</li>
+          <li>interception-proxy</li>
+          <li>vulnerability-scanner</li>
+          <li>tauri</li>
+          <li>react</li>
+          <li>rust</li>
+          <li>typescript</li>
+          <li>desktop-app</li>
+          <li>offline-first</li>
+          <li>sqlite</li>
+          <li>quickjs</li>
+          <li>owasp</li>
+          <li>appsec</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Features ===== -->
+  <section id="features" class="section alt">
+    <div class="wrap">
+      <h2 class="section-title">Everything in one offline workbench</h2>
+      <p class="section-sub">A full interception-proxy tool suite — built from scratch, running locally.</p>
+      <div class="grid">
+        <article class="card">
+          <h3>Proxy</h3>
+          <p>MITM HTTP/HTTPS with a locally generated CA, rich history (Pretty / Raw / Hex, find bar), request &amp; response interception with an inline held-message editor, scope, and match/replace rules.</p>
+        </article>
+        <article class="card">
+          <h3>Target</h3>
+          <p>Site map with URL and HTTP-method views, crawl paths, in-scope filtering, and a linked issue list.</p>
+        </article>
+        <article class="card">
+          <h3>Repeater</h3>
+          <p>Multi-tab request editor with a parsed inspector (line, headers, parameters, body), send/cancel, per-tab history, and follow-redirects.</p>
+        </article>
+        <article class="card">
+          <h3>Intruder</h3>
+          <p>§…§ positions, 4 attack types (sniper, battering ram, pitchfork, cluster bomb), up to 8 payload sets with 14 processors, resource pool, live results and grep extractors.</p>
+        </article>
+        <article class="card">
+          <h3>Comparer</h3>
+          <p>Side-by-side line and word diffs of any two messages, with a differences table and prev/next navigation.</p>
+        </article>
+        <article class="card">
+          <h3>Sequencer</h3>
+          <p>Token randomness analysis: live sampling (cookie / header / regex) or pasted samples — entropy, chi-square, Monte Carlo π, per-position stats.</p>
+        </article>
+        <article class="card">
+          <h3>Decoder</h3>
+          <p>Encode/decode transforms: URL, Base64, hex, and more.</p>
+        </article>
+        <article class="card">
+          <h3>Logger</h3>
+          <p>Persistent event log across proxy, repeater, scope, scanner and system, with tool/level/text filters — also embedded in the Dashboard.</p>
+        </article>
+        <article class="card">
+          <h3>Scanner</h3>
+          <p>17 passive checks on every in-scope response, an active audit engine that crawls and tests parameters (SQLi, XSS, traversal, open redirect, sensitive files), issue framework with dedupe/severity, and live scan tasks.</p>
+        </article>
+        <article class="card">
+          <h3>Collaborator</h3>
+          <p>Local out-of-band server: DNS + HTTP listeners, payload generation (URL / HTML / hostname) with unique subdomains, and a live interaction log pushed to the UI in real time.</p>
+        </article>
+        <article class="card">
+          <h3>Extensions</h3>
+          <p>Embedded QuickJS engine with our own <code>wpt</code> JS API: proxy listeners, HTTP handlers, context-menu actions, and custom report tabs in sandboxed iframes — with an error latch and console.</p>
+        </article>
+        <article class="card">
+          <h3>Session &amp; Upstream</h3>
+          <p>Session-handling rules with macros (replay + extract + auto-set headers/cookies/params), upstream proxy chaining, TLS pass-through hosts, and extra listeners.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Screenshots ===== -->
+  <section id="screenshots" class="section">
+    <div class="wrap">
+      <h2 class="section-title">Screenshots</h2>
+      <p class="section-sub">A dark, keyboard-first, WCAG-AA accessible UI.</p>
+      <div class="shots">
+        <figure><img src="screenshot-dashboard.png" alt="Dashboard" loading="lazy" /><figcaption>Dashboard — scan tasks, issues, event log</figcaption></figure>
+        <figure><img src="screenshot-proxy-history.png" alt="Proxy history" loading="lazy" /><figcaption>Proxy history with detail panes</figcaption></figure>
+        <figure><img src="screenshot-repeater.png" alt="Repeater" loading="lazy" /><figcaption>Repeater with parsed inspector</figcaption></figure>
+        <figure><img src="screenshot-sequencer.png" alt="Sequencer" loading="lazy" /><figcaption>Sequencer entropy analysis</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Status ===== -->
+  <section id="status" class="section">
+    <div class="wrap">
+      <h2 class="section-title">Build status</h2>
+      <p class="section-sub">All phases shipped.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Phase</th><th>Feature</th><th>State</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>App shell, Proxy (history / intercept / options), Target, Repeater, Decoder, Settings</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>2a</td><td>Comparer, Sequencer, Logger (+ Dashboard event log)</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>2b</td><td>WebSocket history, global search, Repeater per-tab history &amp; follow-redirects, intercept Action menu</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>3</td><td>Intruder (attack engine, positions, payload sets, results)</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>4</td><td>Passive scanner, Issues view, active audit, crawling, scan configs</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>6</td><td>Extensions (embedded JS engine, Burp-like extension API)</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>7</td><td>Collaborator (local out-of-band interaction server)</td><td><span class="pill ok">done</span></td></tr>
+            <tr><td>8</td><td>Session handling &amp; macros, upstream proxy, TLS options, multi-listener, shortcuts</td><td><span class="pill ok">done</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Download ===== -->
+  <section id="download" class="section alt">
+    <div class="wrap">
+      <h2 class="section-title">Download</h2>
+      <p class="section-sub">Grab the latest Windows installer. The button always points to the newest release.</p>
+      <div class="dl-card">
+        <div class="dl-info">
+          <div class="dl-name">WebProxy Toolkit <span id="dl-version" class="muted">—</span></div>
+          <div id="dl-file" class="mono muted">Windows · x64 · NSIS installer</div>
+          <ul id="dl-notes" class="dl-notes"></ul>
+        </div>
+        <div class="dl-action">
+          <a id="dl-button" class="btn btn-primary btn-lg" href="#" aria-disabled="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Download installer</span>
+          </a>
+          <a id="dl-all" class="btn btn-ghost" href="https://github.com/jojin1709/webproxy-toolkit/releases" target="_blank" rel="noopener">All releases ↗</a>
+        </div>
+      </div>
+      <p class="note">Authorized testing only. Run it only against systems you own or have permission to test.</p>
+    </div>
+  </section>
+
+  <!-- ===== Developer ===== -->
+  <section id="developer" class="section">
+    <div class="wrap">
+      <h2 class="section-title">Developer</h2>
+      <div class="dev-card">
+        <img src="assets/icon.png" alt="" width="64" height="64" />
+        <div>
+          <div class="dev-name">JOJIN JOHN</div>
+          <div class="dev-role">Creator &amp; sole developer</div>
+          <div class="dev-links">
+            <a href="https://www.linkedin.com/in/jojin-john/" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M4.98 3.5C4.98 4.88 3.87 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.24 8h4.52v14H.24V8zM8.5 8h4.33v1.9h.06c.6-1.14 2.08-2.34 4.28-2.34 4.58 0 5.43 3.01 5.43 6.93V22h-4.52v-6.62c0-1.58-.03-3.61-2.2-3.61-2.2 0-2.54 1.72-2.54 3.5V22H8.5V8z"/></svg>
+              LinkedIn
+            </a>
+            <a href="https://github.com/jojin1709" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.99 5.24.99 11.5c0 4.86 3.15 8.98 7.52 10.43.55.1.75-.24.75-.53v-1.86c-3.06.67-3.71-1.48-3.71-1.48-.5-1.27-1.22-1.61-1.22-1.61-1-.68.08-.67.08-.67 1.11.08 1.69 1.14 1.69 1.14.98 1.69 2.58 1.2 3.21.92.1-.71.39-1.2.7-1.48-2.44-.28-5.01-1.22-5.01-5.44 0-1.2.43-2.18 1.14-2.95-.11-.28-.49-1.4.11-2.92 0 0 .93-.3 3.05 1.13a10.5 10.5 0 0 1 5.56 0c2.12-1.43 3.05-1.13 3.05-1.13.6 1.52.22 2.64.11 2.92.71.77 1.14 1.75 1.14 2.95 0 4.23-2.58 5.16-5.03 5.43.4.34.75 1.02.75 2.06v3.05c0 .29.2.64.76.53 4.36-1.45 7.5-5.57 7.5-10.43C23.01 5.24 18.27.5 12 .5z"/></svg>
+              GitHub
+            </a>
+          </div>
+        </div>
+      </div>
+      <p class="license-line">Licensed under <strong>BUSL-1.1</strong> — source is viewable, but reuse, resale, or hosting as a service is not permitted. Converts to AGPL-3.0 on 2030-10-14. <a href="https://github.com/jojin1709/webproxy-toolkit/blob/main/LICENSE" target="_blank" rel="noopener">Read the license ↗</a></p>
+    </div>
+  </section>
+
+  <!-- ===== Footer ===== -->
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>© 2026 WebProxy Toolkit · Built by <a href="https://www.linkedin.com/in/jojin-john/" target="_blank" rel="noopener">JOJIN JOHN</a></div>
+      <div class="footer-links">
+        <a href="https://github.com/jojin1709/webproxy-toolkit" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/jojin1709/webproxy-toolkit/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/jojin1709/webproxy-toolkit/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

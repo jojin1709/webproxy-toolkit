@@ -12,14 +12,14 @@ Site map from proxied traffic,target,must,yes,no,
 Decoder (URL/Base64/HTML/Hex/Hash encode-decode),tools,must,yes,no,
 Message editor params highlighting + pretty/print,editor,should,yes,no,
 Dark theme dense desktop UI,ui,must,yes,no,
-Multiple proxy listeners (per-port options),proxy,must,yes,no,Burp Proxy options
+Multiple proxy listeners (per-port options),proxy,must,yes,yes,extra listeners share all options
 Match and replace rules on proxy,proxy,must,yes,no,
-Upstream proxy rules (chain),proxy,must,yes,no,
-TLS options (pass-through hosts / protocols / cert opts),proxy,must,yes,no,
+Upstream proxy rules (chain),proxy,must,yes,yes,host-pattern match, plain/TLS to proxy
+TLS options (pass-through hosts / protocols / cert opts),proxy,must,yes,yes,pass-through host list (raw tunnel); protocol/cert matrix cut
 Intercept rules (client/server req+resp granularity),proxy,must,yes,no,
 WebSocket proxy + history,proxy,must,yes,no,Upgrade passthrough + WS frames in history
 HTTP/2 support,proxy,should,yes,no,ALPN h2
-Repeater layout options (split h/v/tabs),repeater,must,yes,no,
+Repeater layout options (split h/v/tabs),repeater,must,yes,yes,h/v stacked toggle shipped; tabs mode cut
 Repeater follow redirects + history per tab,repeater,must,yes,no,
 Comparer (side-by-side diff word/line),tools,must,yes,yes,line + word LCS diff with aligned panes
 Sequencer (session token entropy/randomness),tools,must,yes,yes,request+paste modes; cookie/header/regex sampling + chi-square entropy Monte Carlo tests
@@ -35,14 +35,14 @@ Issue definitions catalog + issue detail view,scanner,must,yes,yes,catalog shown
 Custom scan configurations (scan options),scanner,must,yes,yes,named configs: passive toggle + active-check selection + crawl limits + threads + throttle; default seeded
 Dashboard: tasks (crawl/audit/fuzz) + issue activity,scanner,must,yes,yes,scan tasks table w/ pause/resume/cancel + live progress; audit-log tab (tool=scanner); new scan dialog
 Fuzzing (custom insertion points / param fuzz),scanner,should,yes,no,out of scope — use Intruder
-Session handling rules + macros,session,must,yes,no,rule engine w/ macro replay
+Session handling rules + macros,session,must,yes,yes,rule engine w/ macro replay, cookie/header/body extract
 Auto Repeater / repeat rules (custom rule actions),session,should,yes,no,
 Project save/load (.wpt SQLite file),project,must,yes,no,persistent history/tabs/issues
 Extensions: JS plugin API (embedded engine),extensions,must,yes,yes,our own API - Burp BApp/Java cannot be cloned
 Extensions: HTTP handler / proxy listener / tab / context menu hooks,extensions,must,yes,yes,API surface; no custom columns/scanner checks in JS (v1 cut)
 Collaborator: local OOB server (DNS+HTTP),collaborator,must,yes,yes,local domain/lab targets
 Collaborator: payload generation + interaction log,collaborator,must,yes,yes,
-Keyboard shortcuts + layout customization,ui,should,yes,no,
+Keyboard shortcuts + layout customization,ui,should,yes,yes,Ctrl+Shift+F + Ctrl+1..0 + Esc subset; user rebinding cut
 Issue definitions / lint custom payloads,scanner,should,yes,no,catalog covered by scan config editor; custom payload lint deferred
 License activation / PortSwigger account,licensing,skip,yes,no,no license server; tool is local-only
 Burp Cloud / Burp AI / Telemetry,cloud,skip,yes,no,requires PortSwigger account - excluded

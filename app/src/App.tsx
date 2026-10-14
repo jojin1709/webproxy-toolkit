@@ -59,10 +59,31 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
+    const TAB_ORDER: TabId[] = [
+      "dashboard",
+      "target",
+      "proxy",
+      "intruder",
+      "repeater",
+      "comparer",
+      "collaborator",
+      "sequencer",
+      "decoder",
+      "logger",
+      "extensions",
+    ];
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         setSearchOpen((v) => !v);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        const n = Number(e.key);
+        if (n >= 1 && n <= TAB_ORDER.length) {
+          e.preventDefault();
+          setTab(TAB_ORDER[n - 1]);
+        }
       }
     }
     window.addEventListener("keydown", onKey);

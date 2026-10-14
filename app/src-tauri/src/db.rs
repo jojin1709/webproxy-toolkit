@@ -17,6 +17,25 @@ pub struct ScopeRule {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpstreamRule {
+    pub id: i64,
+    pub position: i64,
+    pub host_pattern: String,
+    pub proxy_host: String,
+    pub proxy_port: u16,
+    pub use_tls: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProxyListenerSlot {
+    pub id: i64,
+    pub host: String,
+    pub port: u16,
+    pub running: bool,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MatchRule {
     pub id: i64,
     pub enabled: bool,
@@ -1584,6 +1603,81 @@ impl Db {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM extensions WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())
+    }
+
+    // ----------------------------------------------------------- upstream (8a)
+
+    pub fn list_upstream(&self) -> Result<Vec<UpstreamRule>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, position, host_pattern, proxy_host, proxy_port, use_tls, enabled
+                 FROM upstream_rules ORDER BY position",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(UpstreamRule {
+                    id: r.get(0)?,
+                    position: r.get(1)?,
+                    host_pattern: r.get(2)?,
+                    proxy_host: r.get(3)?,
+                    proxy_port: r.get(4)?,
+                    use_tls: r.get::<_, i64>(5)? != 0,
+                    enabled: r.get::<_, i64>(6)? != 0,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn insert_upstream(
+        &self,
+        host_pattern: &str,
+        proxy_host: &str,
+        proxy_port: u16,
+        use_tls: bool,
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        let pos: i64 = conn
+            .query_row("SELECT COALESCE(MAX(position),0)+1 FROM upstream_rules", [], |r| r.get(0))
+            .unwrap_or(1);
+        conn.execute(
+            "INSERT INTO upstream_rules (position, host_pattern, proxy_host, proxy_port, use_tls, enabled)
+             VALUES (?1,?2,?3,?4,?5,1)",
+            params![pos, host_pattern, proxy_host, proxy_port, use_tls as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn delete_upstream(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM upstream_rules WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+
+    // ----------------------------------------------------------- settings (8a)
+
+    pub fn get_proxy_setting(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT value FROM proxy_settings WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn set_proxy_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_settings (key, value) VALUES (?1,?2)",
+            params![key, value],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     // ----------------------------------------------------------- collaborator

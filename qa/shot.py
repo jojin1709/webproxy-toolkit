@@ -201,6 +201,16 @@ def run():
         page.wait_for_timeout(300)
         shot(page, "50-collaborator-interactions")
 
+        # ---- Phase 8: upstream / TLS pass-through / extra listeners ----
+        stage[0] = "proxy options upstream"
+        tab(page, "Proxy")
+        sub(page, "Options")
+        page.wait_for_timeout(400)
+        shot(page, "51-proxy-options-upstream")
+        # restore HTTP history sub-tab for later stages
+        page.locator(".subtabs button", has_text="HTTP history").first.click()
+        page.wait_for_timeout(300)
+
         # ---- Group A2: Phase 2a tools ----
         tab(page, "Proxy")
         stage[0] = "stage comparer 1"

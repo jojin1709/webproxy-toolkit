@@ -149,6 +149,15 @@ def run():
         page.wait_for_timeout(300)
         audit(page, "collaborator")
 
+        # proxy options: upstream / TLS pass-through / extra listeners (Phase 8a)
+        tab(page, "Proxy")
+        sub(page, "Options")
+        page.wait_for_timeout(300)
+        audit(page, "proxy-options-upstream")
+        # restore HTTP history sub-tab for the context-menu audit
+        page.locator(".subtabs button", has_text="HTTP history").first.click()
+        page.wait_for_timeout(300)
+
         # context-menu Extensions section (Phase 6b)
         tab(page, "Proxy")
         page.locator(".history tbody tr").nth(1).click(button="right")

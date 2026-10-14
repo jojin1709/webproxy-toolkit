@@ -217,3 +217,20 @@ CREATE TABLE IF NOT EXISTS collab_interactions (
   detail     TEXT NOT NULL DEFAULT '{}',
   seen_at    TEXT NOT NULL
 );
+
+-- Upstream proxy chain (Phase 8)
+CREATE TABLE IF NOT EXISTS upstream_rules (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  position INTEGER NOT NULL,
+  host_pattern TEXT NOT NULL,
+  proxy_host  TEXT NOT NULL,
+  proxy_port  INTEGER NOT NULL,
+  use_tls     INTEGER NOT NULL DEFAULT 0,
+  enabled   INTEGER NOT NULL DEFAULT 1
+);
+
+-- Proxy settings key/value (Phase 8) -- pass_through_hosts, multi_listeners JSON
+CREATE TABLE IF NOT EXISTS proxy_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

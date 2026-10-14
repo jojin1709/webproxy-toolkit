@@ -8,9 +8,11 @@ import {
   HttpExchange,
   headersToText,
   MatchRule,
+  ProxyListenerSlot,
   ProxyStatus,
   ScopeRule,
   statusClass,
+  UpstreamRule,
   WsConn,
   WsFrame,
 } from "../types";
@@ -142,6 +144,12 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   const [wsShowHs, setWsShowHs] = useState(false);
   const wsSelIdRef = useRef<number | null>(null);
   const [extMenus, setExtMenus] = useState<ExtMenuItem[]>([]);
+  const [upstreams, setUpstreams] = useState<UpstreamRule[]>([]);
+  const [passList, setPassList] = useState<string[]>([]);
+  const [listeners, setListeners] = useState<ProxyListenerSlot[]>([]);
+  const [upForm, setUpForm] = useState({ host_pattern: "", proxy_host: "", proxy_port: 3128, use_tls: false });
+  const [passInput, setPassInput] = useState("");
+  const [listenForm, setListenForm] = useState({ host: "127.0.0.1", port: 8081 });
 
   useEffect(() => {
     invoke<ExtHookInfo>("extension_hooks")
@@ -173,6 +181,9 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
       invoke<ScopeRule[]>("scope_list")
         .then(setScopeRules)
         .catch(() => {});
+      invoke<UpstreamRule[]>("upstream_list").then(setUpstreams).catch(() => {});
+      invoke<string[]>("pass_through_list").then(setPassList).catch(() => {});
+      invoke<ProxyListenerSlot[]>("listener_list").then(setListeners).catch(() => {});
     }
   }, [sub, status.history_count, setToast]);
 
@@ -520,6 +531,56 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   async function deleteRule(id: number) {
     await invoke("match_delete", { id });
     setRules(await invoke<MatchRule[]>("match_list"));
+  }
+
+  async function addUpstream() {
+    try {
+      await invoke("upstream_add", {
+        hostPattern: upForm.host_pattern,
+        proxyHost: upForm.proxy_host,
+        proxyPort: upForm.proxy_port,
+        useTls: upForm.use_tls,
+      });
+      setUpstreams(await invoke<UpstreamRule[]>("upstream_list"));
+      setUpForm({ host_pattern: "", proxy_host: "", proxy_port: 3128, use_tls: false });
+    } catch (e) {
+      setToast(String(e));
+    }
+  }
+
+  async function deleteUpstream(id: number) {
+    await invoke("upstream_delete", { id });
+    setUpstreams(await invoke<UpstreamRule[]>("upstream_list"));
+  }
+
+  async function addPass() {
+    const host = passInput.trim();
+    if (!host) return;
+    const next = [...passList, host];
+    await invoke("pass_through_set", { hosts: next });
+    setPassList(next);
+    setPassInput("");
+  }
+
+  async function removePass(host: string) {
+    const next = passList.filter((h) => h !== host);
+    await invoke("pass_through_set", { hosts: next });
+    setPassList(next);
+  }
+
+  async function addListener() {
+    try {
+      await invoke("listener_add", { host: listenForm.host, port: listenForm.port });
+      setListeners(await invoke<ProxyListenerSlot[]>("listener_list"));
+      setListenForm({ ...listenForm, port: listenForm.port + 1 });
+    } catch (e) {
+      setToast(String(e));
+    }
+  }
+
+  async function removeListener(id: number) {
+    await invoke("listener_remove", { id });
+    setListeners(await invoke<ProxyListenerSlot[]>("listener_list"));
   }
 
   const SUBS: [Sub, string, string?][] = [
@@ -1046,6 +1107,182 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
                 />
                 Intercept server responses
               </label>
+            </div>
+          </section>
+
+          <section>
+            <h2>Upstream proxies</h2>
+            <p className="muted">
+              Route traffic through a chaining proxy. First matching host pattern wins
+              (use * as a wildcard prefix, e.g. *.corp).
+            </p>
+            <table className="history" style={{ marginBottom: 12 }}>
+              <thead>
+                <tr>
+                  <th>Host pattern</th>
+                  <th>Proxy</th>
+                  <th>TLS</th>
+                  <th aria-label="Actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {upstreams.map((r) => (
+                  <tr key={r.id}>
+                    <td className="mono">{r.host_pattern}</td>
+                    <td className="mono">
+                      {r.proxy_host}:{r.proxy_port}
+                    </td>
+                    <td>{r.use_tls ? "TLS" : ""}</td>
+                    <td>
+                      <button className="btn" onClick={() => deleteUpstream(r.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {upstreams.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="muted">
+                      No upstream proxies — traffic connects directly.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <input
+                className="input"
+                placeholder="Host pattern (*.corp)"
+                value={upForm.host_pattern}
+                onChange={(e) => setUpForm({ ...upForm, host_pattern: e.target.value })}
+                aria-label="Upstream host pattern"
+              />
+              <input
+                className="input"
+                placeholder="Proxy host"
+                value={upForm.proxy_host}
+                onChange={(e) => setUpForm({ ...upForm, proxy_host: e.target.value })}
+                aria-label="Upstream proxy host"
+              />
+              <input
+                className="input"
+                style={{ width: 90 }}
+                type="number"
+                value={upForm.proxy_port}
+                onChange={(e) => setUpForm({ ...upForm, proxy_port: Number(e.target.value) || 0 })}
+                aria-label="Upstream proxy port"
+              />
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={upForm.use_tls}
+                  onChange={(e) => setUpForm({ ...upForm, use_tls: e.target.checked })}
+                />
+                TLS to proxy
+              </label>
+              <button
+                className="btn primary"
+                onClick={addUpstream}
+                disabled={!upForm.host_pattern || !upForm.proxy_host}
+              >
+                Add upstream
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h2>TLS pass-through</h2>
+            <p className="muted">
+              Hosts listed here are not decrypted — the proxy opens a raw tunnel instead of
+              MITMing with its CA. Use for certificate-pinned targets.
+            </p>
+            <div className="row" style={{ flexWrap: "wrap", marginBottom: 8 }}>
+              {passList.map((h) => (
+                <span key={h} className="chip">
+                  {h}
+                  <button
+                    className="chip-x"
+                    aria-label={`Remove ${h}`}
+                    onClick={() => removePass(h)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {passList.length === 0 && <span className="muted">All hosts are decrypted (MITM).</span>}
+            </div>
+            <div className="row">
+              <input
+                className="input"
+                placeholder="Host or *.domain"
+                value={passInput}
+                onChange={(e) => setPassInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addPass()}
+                aria-label="Pass-through host"
+              />
+              <button className="btn primary" onClick={addPass} disabled={!passInput.trim()}>
+                Add
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h2>Extra listeners</h2>
+            <p className="muted">
+              Additional proxy ports sharing all options (intercept, scope, match/replace).
+            </p>
+            <table className="history" style={{ marginBottom: 12 }}>
+              <thead>
+                <tr>
+                  <th>Interface</th>
+                  <th>Port</th>
+                  <th aria-label="Actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {listeners.map((l) => (
+                  <tr key={l.id}>
+                    <td className="mono">{l.host}</td>
+                    <td className="mono">{l.port}</td>
+                    <td>
+                      <button className="btn" onClick={() => removeListener(l.id)}>
+                        Stop
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {listeners.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="muted">
+                      No extra listeners.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="row">
+              <input
+                className="input"
+                style={{ width: 140 }}
+                value={listenForm.host}
+                onChange={(e) => setListenForm({ ...listenForm, host: e.target.value })}
+                aria-label="Listener host"
+              />
+              <input
+                className="input"
+                style={{ width: 90 }}
+                type="number"
+                value={listenForm.port}
+                onChange={(e) => setListenForm({ ...listenForm, port: Number(e.target.value) || 0 })}
+                aria-label="Listener port"
+              />
+              <button className="btn primary" onClick={addListener} disabled={!listenForm.port}>
+                Start listener
+              </button>
             </div>
           </section>
 

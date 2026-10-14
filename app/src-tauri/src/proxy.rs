@@ -60,6 +60,16 @@ pub struct ProxyState {
     pub scan_runs: crate::scanner::ScanRuns,
     pub extensions: Arc<crate::extensions::ExtRuntime>,
     pub collab: crate::collaborator::CollabState,
+    pub upstream: Mutex<Vec<crate::db::UpstreamRule>>,
+    pub pass_through: Mutex<Vec<String>>,
+    pub extra_listeners: Mutex<Vec<ExtraListener>>,
+}
+
+pub struct ExtraListener {
+    pub id: i64,
+    pub host: String,
+    pub port: u16,
+    pub shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl Default for ProxyState {
@@ -82,6 +92,9 @@ impl Default for ProxyState {
             scan_runs: crate::scanner::ScanRuns::default(),
             extensions: Arc::new(crate::extensions::ExtRuntime::new()),
             collab: crate::collaborator::CollabState::default(),
+            upstream: Mutex::new(Vec::new()),
+            pass_through: Mutex::new(Vec::new()),
+            extra_listeners: Mutex::new(Vec::new()),
         }
     }
 }
@@ -101,6 +114,14 @@ pub fn hydrate(state: &SharedProxy, database: &Arc<Db>) {
     }
     if let Ok(rules) = database.list_match_replace() {
         *state.match_replace.lock() = rules;
+    }
+    if let Ok(rules) = database.list_upstream() {
+        *state.upstream.lock() = rules;
+    }
+    if let Ok(Some(v)) = database.get_proxy_setting("pass_through_hosts") {
+        if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
+            *state.pass_through.lock() = list;
+        }
     }
     if let Ok(mut rows) = database.load_exchanges(5000) {
         if let Ok(max_id) = database.max_exchange_id() {
@@ -374,6 +395,74 @@ async fn connect_upstream(host: &str, port: u16, tls: bool) -> Result<Upstream, 
     Ok(Upstream::Tls(Box::new(tls_stream)))
 }
 
+/// Return the first enabled upstream rule whose host pattern matches, if any.
+pub fn find_upstream(state: &SharedProxy, host: &str) -> Option<crate::db::UpstreamRule> {
+    let rules = state.upstream.lock();
+    rules
+        .iter()
+        .filter(|r| r.enabled)
+        .find(|r| host_matches(&r.host_pattern, host))
+        .cloned()
+}
+
+/// True if `host` matches the pattern: exact (case-insensitive) or `*` wildcard suffix.
+pub fn host_matches(pattern: &str, host: &str) -> bool {
+    let p = pattern.trim().to_lowercase();
+    let h = host.trim().to_lowercase();
+    if p.is_empty() {
+        return false;
+    }
+    if let Some(suffix) = p.strip_prefix("*.") {
+        h == suffix || h.ends_with(&format!(".{suffix}"))
+    } else {
+        h == p
+    }
+}
+
+/// True if the host is in the TLS pass-through list (skip MITM, raw tunnel).
+pub fn is_pass_through(state: &SharedProxy, host: &str) -> bool {
+    let list = state.pass_through.lock();
+    list.iter().any(|p| host_matches(p, host))
+}
+
+/// Open a raw tunnel to host:port, issuing CONNECT through an upstream proxy when a
+/// rule matches. Returns a stream ready for opaque bi-directional copy.
+async fn open_tunnel(state: &SharedProxy, host: &str, port: u16) -> Result<Upstream, String> {
+    if let Some(rule) = find_upstream(state, host) {
+        let mut up = connect_upstream(&rule.proxy_host, rule.proxy_port, rule.use_tls).await?;
+        let connect_req = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n");
+        up.write_all(connect_req.as_bytes()).await.map_err(|e| e.to_string())?;
+        let (status, _, _) = read_response(&mut up).await.map_err(|e| e.to_string())?;
+        if status != 200 {
+            return Err(format!("upstream CONNECT failed: {status}"));
+        }
+        Ok(up)
+    } else {
+        connect_upstream(host, port, false).await
+    }
+}
+
+/// Rewrite the request-line of a plain HTTP request to absolute form for proxy chaining.
+fn rewrite_absolute(outbound: &[u8], host: &str, port: u16) -> Vec<u8> {
+    let text = String::from_utf8_lossy(outbound);
+    let mut it = text.split("\r\n");
+    let first = it.next().unwrap_or("");
+    let rest: Vec<&str> = it.collect();
+    let parts: Vec<&str> = first.splitn(3, ' ').collect();
+    let new_first = if parts.len() == 3 && parts[1].starts_with('/') {
+        let hp = if port == 80 { host.to_string() } else { format!("{host}:{port}") };
+        format!("{} http://{}{} {}", parts[0], hp, parts[1], parts[2])
+    } else {
+        first.to_string()
+    };
+    let mut out = new_first;
+    for l in rest {
+        out.push_str("\r\n");
+        out.push_str(l);
+    }
+    out.into_bytes()
+}
+
 async fn connect_upstream_read_tls(host: &str, port: u16) -> Result<Upstream, String> {
     connect_upstream(host, port, true).await
 }
@@ -424,6 +513,91 @@ pub fn stop_proxy(state: &ProxyState) {
         let _ = tx.send(true);
     }
     state.running.store(false, Ordering::SeqCst);
+}
+
+/// Start an extra proxy listener sharing all proxy options. Returns the bound port.
+pub async fn listener_add(state: SharedProxy, host: String, port: u16) -> Result<u16, String> {
+    let listener = TcpListener::bind((host.as_str(), port))
+        .await
+        .map_err(|e| format!("bind {host}:{port}: {e}"))?;
+    let actual = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    let id = state
+        .extra_listeners
+        .lock()
+        .iter()
+        .map(|l| l.id)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    state.extra_listeners.lock().push(ExtraListener {
+        id,
+        host,
+        port: actual,
+        shutdown: tx,
+    });
+    let st = state.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = rx.changed() => {
+                    if *rx.borrow() {
+                        break;
+                    }
+                }
+                acc = listener.accept() => {
+                    match acc {
+                        Ok((stream, peer)) => {
+                            let st2 = st.clone();
+                            tokio::spawn(async move {
+                                let _ = handle_conn(st2, stream, peer.to_string()).await;
+                            });
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+        st.extra_listeners.lock().retain(|l| l.id != id);
+    });
+    Ok(actual)
+}
+
+pub fn listener_remove(state: &ProxyState, id: i64) -> bool {
+    let mut list = state.extra_listeners.lock();
+    if let Some(pos) = list.iter().position(|l| l.id == id) {
+        let l = list.remove(pos);
+        let _ = l.shutdown.send(true);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn listener_list(state: &ProxyState) -> Vec<crate::db::ProxyListenerSlot> {
+    state
+        .extra_listeners
+        .lock()
+        .iter()
+        .map(|l| crate::db::ProxyListenerSlot {
+            id: l.id,
+            host: l.host.clone(),
+            port: l.port,
+            running: true,
+        })
+        .collect()
+}
+
+pub fn find_upstream_list(state: &SharedProxy) -> Vec<crate::db::UpstreamRule> {
+    state.upstream.lock().clone()
+}
+
+pub fn refresh_upstream(state: &SharedProxy) {
+    if let Some(db) = state.db.read().clone() {
+        if let Ok(rules) = db.list_upstream() {
+            *state.upstream.lock() = rules;
+        }
+    }
 }
 
 async fn maybe_intercept(
@@ -923,8 +1097,16 @@ async fn handle_conn(state: SharedProxy, mut stream: TcpStream, peer: String) ->
     };
 
     let started = std::time::Instant::now();
-    let mut up = connect_upstream(&host, port, false).await?;
-    if let Err(e) = up.write_all(&outbound).await {
+    let up_rule = find_upstream(&state, &host);
+    let mut up = match &up_rule {
+        Some(rule) => connect_upstream(&rule.proxy_host, rule.proxy_port, rule.use_tls).await?,
+        None => connect_upstream(&host, port, false).await?,
+    };
+    let outbound_eff: Vec<u8> = match &up_rule {
+        Some(_) => rewrite_absolute(&outbound, &host, port),
+        None => outbound.to_vec(),
+    };
+    if let Err(e) = up.write_all(&outbound_eff).await {
         let _ = stream
             .write_all(format!("HTTP/1.1 502 Bad Gateway\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", e.to_string().len(), e).as_bytes())
             .await;
@@ -1029,6 +1211,30 @@ async fn handle_connect(
     } else {
         (target.clone(), 443u16)
     };
+
+    if is_pass_through(&state, &host) {
+        let mut up = match open_tunnel(&state, &host, port).await {
+            Ok(u) => u,
+            Err(e) => {
+                let msg = format!("HTTP/1.1 502 Bad Gateway\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", e.len(), e);
+                let _ = stream.write_all(msg.as_bytes()).await;
+                return Err(e);
+            }
+        };
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .map_err(|e| e.to_string())?;
+        match &mut up {
+            Upstream::Plain(s) => {
+                let _ = tokio::io::copy_bidirectional(&mut stream, s).await;
+            }
+            Upstream::Tls(t) => {
+                let _ = tokio::io::copy_bidirectional(&mut stream, t.as_mut()).await;
+            }
+        }
+        return Ok(());
+    }
 
     let ca = state.ca.read().clone().ok_or("CA not loaded")?;
     let (leaf_cert, leaf_key) = mint_leaf(&ca, &host)?;
@@ -1484,5 +1690,53 @@ mod tests {
             resolve_location("https://h.example/x", "https://other.example/").unwrap(),
             "https://other.example/"
         );
+    }
+
+    // ---------------------------------------------------------------- 8a: upstream / pass-through
+
+    #[test]
+    fn host_matches_exact_and_wildcard() {
+        assert!(host_matches("api.example.com", "api.example.com"));
+        assert!(host_matches("API.example.com", "api.EXAMPLE.com"));
+        assert!(!host_matches("api.example.com", "other.example.com"));
+        assert!(host_matches("*.example.com", "api.example.com"));
+        assert!(host_matches("*.example.com", "example.com"));
+        assert!(host_matches("*.example.com", "a.b.example.com"));
+        assert!(!host_matches("*.example.com", "notexample.com"));
+        assert!(!host_matches("", "anything"));
+    }
+
+    #[test]
+    fn rewrite_absolute_for_proxy_chain() {
+        let out = rewrite_absolute(b"GET /x HTTP/1.1\r\nHost: h\r\n\r\n", "h", 80);
+        assert_eq!(out, b"GET http://h/x HTTP/1.1\r\nHost: h\r\n\r\n".to_vec());
+        let out8080 = rewrite_absolute(b"POST /y HTTP/1.1\r\nHost: h\r\n\r\n", "h", 8080);
+        assert_eq!(out8080, b"POST http://h:8080/y HTTP/1.1\r\nHost: h\r\n\r\n".to_vec());
+        // absolute-form request-line is left alone
+        let abs = b"GET http://h/z HTTP/1.1\r\nHost: h\r\n\r\n";
+        assert_eq!(rewrite_absolute(abs, "h", 80), abs.to_vec());
+    }
+
+    #[test]
+    fn find_upstream_picks_first_enabled_match() {
+        let st: SharedProxy = Arc::new(ProxyState::default());
+        *st.upstream.lock() = vec![
+            crate::db::UpstreamRule { id: 1, position: 1, host_pattern: "*.corp".into(), proxy_host: "p1".into(), proxy_port: 3128, use_tls: false, enabled: true },
+            crate::db::UpstreamRule { id: 2, position: 2, host_pattern: "api.corp".into(), proxy_host: "p2".into(), proxy_port: 3128, use_tls: false, enabled: false },
+            crate::db::UpstreamRule { id: 3, position: 3, host_pattern: "api.corp".into(), proxy_host: "p3".into(), proxy_port: 8080, use_tls: true, enabled: true },
+        ];
+        let hit = find_upstream(&st, "api.corp").expect("match");
+        assert_eq!(hit.proxy_host, "p1");
+        let none = find_upstream(&st, "elsewhere.com");
+        assert!(none.is_none());
+    }
+
+    #[test]
+    fn pass_through_detects_listed_hosts() {
+        let st: SharedProxy = Arc::new(ProxyState::default());
+        *st.pass_through.lock() = vec!["bank.example".into(), "*.internal".into()];
+        assert!(is_pass_through(&st, "bank.example"));
+        assert!(is_pass_through(&st, "svc.internal"));
+        assert!(!is_pass_through(&st, "public.example"));
     }
 }

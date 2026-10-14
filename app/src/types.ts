@@ -381,3 +381,20 @@ export type CollabInteraction = {
   detail: Record<string, unknown>;
   seen_at: string;
 };
+
+export type UpstreamRule = {
+  id: number;
+  position: number;
+  host_pattern: string;
+  proxy_host: string;
+  proxy_port: number;
+  use_tls: boolean;
+  enabled: boolean;
+};
+
+export type ProxyListenerSlot = {
+  id: number;
+  host: string;
+  port: number;
+  running: boolean;
+};

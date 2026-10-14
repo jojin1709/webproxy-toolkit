@@ -1046,6 +1046,14 @@ pub fn register(
             collab_delete_payload,
             collab_interactions_list,
             collab_clear_interactions,
+            upstream_list,
+            upstream_add,
+            upstream_delete,
+            pass_through_list,
+            pass_through_set,
+            listener_add,
+            listener_remove,
+            listener_list,
         ])
 }
 
@@ -2048,6 +2056,69 @@ pub fn collab_interactions_list(
 #[tauri::command]
 pub fn collab_clear_interactions(state: State<'_, SharedProxy>) -> Result<usize, String> {
     db_of(&state)?.clear_collab_interactions()
+}
+
+// ---------------------------------------------------------------- Phase 8: upstream / TLS / listeners
+
+#[tauri::command]
+pub fn upstream_list(state: State<'_, SharedProxy>) -> Vec<crate::db::UpstreamRule> {
+    crate::proxy::find_upstream_list(&state)
+}
+
+#[tauri::command]
+pub fn upstream_add(
+    state: State<'_, SharedProxy>,
+    host_pattern: String,
+    proxy_host: String,
+    proxy_port: u16,
+    use_tls: bool,
+) -> Result<i64, String> {
+    let db = db_of(&state)?;
+    let id = db.insert_upstream(&host_pattern, &proxy_host, proxy_port, use_tls)?;
+    crate::proxy::refresh_upstream(&state);
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn upstream_delete(state: State<'_, SharedProxy>, id: i64) -> Result<usize, String> {
+    let db = db_of(&state)?;
+    let n = db.delete_upstream(id)?;
+    crate::proxy::refresh_upstream(&state);
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn pass_through_list(state: State<'_, SharedProxy>) -> Vec<String> {
+    state.pass_through.lock().clone()
+}
+
+#[tauri::command]
+pub fn pass_through_set(state: State<'_, SharedProxy>, hosts: Vec<String>) -> Result<(), String> {
+    let db = db_of(&state)?;
+    let json = serde_json::to_string(&hosts).map_err(|e| e.to_string())?;
+    db.set_proxy_setting("pass_through_hosts", &json)?;
+    *state.pass_through.lock() = hosts;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn listener_add(
+    state: State<'_, SharedProxy>,
+    host: String,
+    port: u16,
+) -> Result<u16, String> {
+    let st: crate::proxy::SharedProxy = state.inner().clone();
+    tauri::async_runtime::block_on(crate::proxy::listener_add(st, host, port))
+}
+
+#[tauri::command]
+pub fn listener_remove(state: State<'_, SharedProxy>, id: i64) -> Result<bool, String> {
+    Ok(crate::proxy::listener_remove(&state, id))
+}
+
+#[tauri::command]
+pub fn listener_list(state: State<'_, SharedProxy>) -> Vec<crate::db::ProxyListenerSlot> {
+    crate::proxy::listener_list(&state)
 }
 
 #[cfg(test)]

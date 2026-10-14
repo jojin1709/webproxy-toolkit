@@ -601,6 +601,26 @@ textarea {
   color: var(--color-danger-text);
 }
 
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chip-x {
+  background: none;
+  border: none;
+  color: var(--color-text-muted, inherit);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+
+.chip-x:hover {
+  color: var(--color-danger-text);
+}
+
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);

@@ -386,6 +386,33 @@
   ];
   let collabSeq = 3;
 
+  const upstreamRules = [
+    {
+      id: 1,
+      position: 1,
+      host_pattern: "*.corp",
+      proxy_host: "proxy.corp",
+      proxy_port: 3128,
+      use_tls: false,
+      enabled: true,
+    },
+    {
+      id: 2,
+      position: 2,
+      host_pattern: "api.internal",
+      proxy_host: "jump.internal",
+      proxy_port: 8443,
+      use_tls: true,
+      enabled: true,
+    },
+  ];
+  let upstreamSeq = 3;
+  let passThroughHosts = ["bank.example", "*.pinned.internal"];
+  const extraListeners = [
+    { id: 1, host: "127.0.0.1", port: 8082, running: true },
+  ];
+  let listenerSeq = 2;
+
   const wsConns = [
     {
       id: 1,
@@ -1368,6 +1395,46 @@
       collabInteractions.length = 0;
       return n;
     },
+    upstream_list: () => upstreamRules.map((r) => ({ ...r })),
+    upstream_add: (a) => {
+      const r = {
+        id: upstreamSeq++,
+        position: upstreamRules.length + 1,
+        host_pattern: (a && a.hostPattern) || "",
+        proxy_host: (a && a.proxyHost) || "",
+        proxy_port: (a && a.proxyPort) || 3128,
+        use_tls: !!(a && a.useTls),
+        enabled: true,
+      };
+      upstreamRules.push(r);
+      return r.id;
+    },
+    upstream_delete: (a) => {
+      const i = upstreamRules.findIndex((r) => r.id === (a && a.id));
+      if (i >= 0) upstreamRules.splice(i, 1);
+      return i >= 0 ? 1 : 0;
+    },
+    pass_through_list: () => [...passThroughHosts],
+    pass_through_set: (a) => {
+      passThroughHosts = (a && a.hosts) ? [...a.hosts] : [];
+      return null;
+    },
+    listener_add: (a) => {
+      const port = (a && a.port) || 9000;
+      extraListeners.push({
+        id: listenerSeq++,
+        host: (a && a.host) || "127.0.0.1",
+        port,
+        running: true,
+      });
+      return port;
+    },
+    listener_remove: (a) => {
+      const i = extraListeners.findIndex((l) => l.id === (a && a.id));
+      if (i >= 0) extraListeners.splice(i, 1);
+      return i >= 0;
+    },
+    listener_list: () => extraListeners.map((l) => ({ ...l })),
   };
 
   const callbacks = {};

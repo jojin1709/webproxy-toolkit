@@ -413,6 +413,42 @@
   ];
   let listenerSeq = 2;
 
+  const sessionMacros = [
+    {
+      id: 1,
+      name: "Login",
+      requests: [
+        "POST /login HTTP/1.1\r\nHost: shop.example.com\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 27\r\n\r\nuser=admin&pass=admin123",
+      ],
+    },
+  ];
+  let macroSeq = 2;
+  const sessionRules = [
+    {
+      id: 1,
+      position: 1,
+      name: "Refresh session cookie",
+      tool: "any",
+      match_host: "",
+      macro_id: 1,
+      updates: [
+        { kind: "set-cookie", name: "SESSIONID", extract: { from: "cookie", name: "SESSIONID" } },
+      ],
+      enabled: true,
+    },
+    {
+      id: 2,
+      position: 2,
+      name: "Add CSRF header",
+      tool: "repeater",
+      match_host: "shop.example.com",
+      macro_id: null,
+      updates: [{ kind: "set-header", name: "X-CSRF", value: "token-123" }],
+      enabled: true,
+    },
+  ];
+  let sessRuleSeq = 3;
+
   const wsConns = [
     {
       id: 1,
@@ -1435,6 +1471,50 @@
       return i >= 0;
     },
     listener_list: () => extraListeners.map((l) => ({ ...l })),
+    session_macro_list: () =>
+      sessionMacros.map((m) => ({ ...m, requests: [...m.requests] })),
+    session_macro_add: (a) => {
+      const input = (a && a.input) || a || {};
+      const m = {
+        id: macroSeq++,
+        name: input.name || "Macro",
+        requests: input.requests || [],
+      };
+      sessionMacros.push(m);
+      return m.id;
+    },
+    session_macro_delete: (a) => {
+      const i = sessionMacros.findIndex((m) => m.id === (a && a.id));
+      if (i >= 0) sessionMacros.splice(i, 1);
+      return i >= 0 ? 1 : 0;
+    },
+    session_rule_list: () =>
+      sessionRules.map((r) => ({ ...r, updates: r.updates.map((u) => ({ ...u })) })),
+    session_rule_add: (a) => {
+      const input = (a && a.input) || a || {};
+      const r = {
+        id: sessRuleSeq++,
+        position: sessionRules.length + 1,
+        name: input.name || "Rule",
+        tool: input.tool || "any",
+        match_host: input.match_host || "",
+        macro_id: input.macro_id != null ? input.macro_id : null,
+        updates: input.updates || [],
+        enabled: true,
+      };
+      sessionRules.push(r);
+      return r.id;
+    },
+    session_rule_delete: (a) => {
+      const i = sessionRules.findIndex((r) => r.id === (a && a.id));
+      if (i >= 0) sessionRules.splice(i, 1);
+      return i >= 0 ? 1 : 0;
+    },
+    session_rule_run: (a) => {
+      // echo the request with a marker so the shot shows a rewrite
+      const req = (a && a.request) || "";
+      return req.replace(/\r\n\r\n/, "\r\nX-Session-Rule: applied\r\n\r\n");
+    },
   };
 
   const callbacks = {};

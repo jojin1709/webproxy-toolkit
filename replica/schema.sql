@@ -234,3 +234,21 @@ CREATE TABLE IF NOT EXISTS proxy_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Session handling rules + macros (Phase 8b)
+CREATE TABLE IF NOT EXISTS session_macros (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name  TEXT NOT NULL,
+  requests TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_rules (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  position INTEGER NOT NULL,
+  name     TEXT NOT NULL,
+  tool     TEXT NOT NULL DEFAULT 'any',
+  match_host TEXT NOT NULL DEFAULT '',
+  macro_id INTEGER,
+  updates  TEXT NOT NULL DEFAULT '[]',
+  enabled  INTEGER NOT NULL DEFAULT 1
+);

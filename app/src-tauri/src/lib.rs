@@ -6,6 +6,7 @@ pub mod extensions;
 pub mod intruder;
 pub mod proxy;
 pub mod scanner;
+pub mod session;
 
 use proxy::SharedProxy;
 

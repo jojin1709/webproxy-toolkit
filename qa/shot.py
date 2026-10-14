@@ -207,6 +207,10 @@ def run():
         sub(page, "Options")
         page.wait_for_timeout(400)
         shot(page, "51-proxy-options-upstream")
+        stage[0] = "proxy options session"
+        page.locator("#panel-proxy section", has_text="Session handling").first.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        shot(page, "52-proxy-options-session")
         # restore HTTP history sub-tab for later stages
         page.locator(".subtabs button", has_text="HTTP history").first.click()
         page.wait_for_timeout(300)

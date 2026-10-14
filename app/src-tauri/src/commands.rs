@@ -1054,6 +1054,13 @@ pub fn register(
             listener_add,
             listener_remove,
             listener_list,
+            session_macro_list,
+            session_macro_add,
+            session_macro_delete,
+            session_rule_list,
+            session_rule_add,
+            session_rule_delete,
+            session_rule_run,
         ])
 }
 
@@ -2119,6 +2126,90 @@ pub fn listener_remove(state: State<'_, SharedProxy>, id: i64) -> Result<bool, S
 #[tauri::command]
 pub fn listener_list(state: State<'_, SharedProxy>) -> Vec<crate::db::ProxyListenerSlot> {
     crate::proxy::listener_list(&state)
+}
+
+// ---------------------------------------------------------------- Phase 8b: session rules + macros
+
+#[derive(serde::Deserialize)]
+pub struct SessionMacroInput {
+    pub name: String,
+    pub requests: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SessionRuleInput {
+    pub name: String,
+    #[serde(default = "default_tool")]
+    pub tool: String,
+    #[serde(default)]
+    pub match_host: String,
+    #[serde(default)]
+    pub macro_id: Option<i64>,
+    #[serde(default)]
+    pub updates: Vec<crate::session::SessionUpdate>,
+}
+
+fn default_tool() -> String {
+    "any".into()
+}
+
+#[tauri::command]
+pub fn session_macro_list(
+    state: State<'_, SharedProxy>,
+) -> Result<Vec<crate::session::SessionMacro>, String> {
+    db_of(&state)?.list_session_macros()
+}
+
+#[tauri::command]
+pub fn session_macro_add(
+    state: State<'_, SharedProxy>,
+    input: SessionMacroInput,
+) -> Result<i64, String> {
+    db_of(&state)?.insert_session_macro(&input.name, &input.requests)
+}
+
+#[tauri::command]
+pub fn session_macro_delete(state: State<'_, SharedProxy>, id: i64) -> Result<usize, String> {
+    db_of(&state)?.delete_session_macro(id)
+}
+
+#[tauri::command]
+pub fn session_rule_list(
+    state: State<'_, SharedProxy>,
+) -> Result<Vec<crate::session::SessionRule>, String> {
+    db_of(&state)?.list_session_rules()
+}
+
+#[tauri::command]
+pub fn session_rule_add(
+    state: State<'_, SharedProxy>,
+    input: SessionRuleInput,
+) -> Result<i64, String> {
+    db_of(&state)?.insert_session_rule(
+        &input.name,
+        &input.tool,
+        &input.match_host,
+        input.macro_id,
+        &input.updates,
+    )
+}
+
+#[tauri::command]
+pub fn session_rule_delete(state: State<'_, SharedProxy>, id: i64) -> Result<usize, String> {
+    db_of(&state)?.delete_session_rule(id)
+}
+
+#[tauri::command]
+pub async fn session_rule_run(
+    state: State<'_, SharedProxy>,
+    tool: String,
+    host: String,
+    port: u16,
+    tls: bool,
+    request: String,
+) -> Result<String, String> {
+    let st: crate::proxy::SharedProxy = state.inner().clone();
+    crate::session::run_session_rules(&st, &tool, &host, port, tls, &request).await
 }
 
 #[cfg(test)]

@@ -398,3 +398,33 @@ export type ProxyListenerSlot = {
   port: number;
   running: boolean;
 };
+
+export type SessionExtract = {
+  from: string;
+  name?: string;
+  regex?: string;
+};
+
+export type SessionUpdate = {
+  kind: string;
+  name: string;
+  value?: string | null;
+  extract?: SessionExtract | null;
+};
+
+export type SessionMacro = {
+  id: number;
+  name: string;
+  requests: string[];
+};
+
+export type SessionRule = {
+  id: number;
+  position: number;
+  name: string;
+  tool: string;
+  match_host: string;
+  macro_id: number | null;
+  updates: SessionUpdate[];
+  enabled: boolean;
+};

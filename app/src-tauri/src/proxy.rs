@@ -144,7 +144,7 @@ pub fn hydrate(state: &SharedProxy, database: &Arc<Db>) {
 
 pub type SharedProxy = Arc<ProxyState>;
 
-fn split_message(raw: &str) -> Option<(String, Vec<(String, String)>, Vec<u8>)> {
+pub fn split_message(raw: &str) -> Option<(String, Vec<(String, String)>, Vec<u8>)> {
     let idx = raw.find("\r\n\r\n")?;
     let head = &raw[..idx];
     let body = raw[idx + 4..].as_bytes().to_vec();
@@ -182,7 +182,7 @@ fn header_get(headers: &[(String, String)], name: &str) -> Option<String> {
         .map(|(_, v)| v.clone())
 }
 
-fn rebuild_request(request_line: &str, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
+pub fn rebuild_request(request_line: &str, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(request_line.as_bytes());
     out.extend_from_slice(b"\r\n");
@@ -1091,6 +1091,13 @@ async fn handle_conn(state: SharedProxy, mut stream: TcpStream, peer: String) ->
     let (rl2, headers2, body2) =
         split_message(&ext_req_raw).unwrap_or((rl2, headers2, body2));
 
+    let raw_for_session = String::from_utf8_lossy(&rebuild_request(&rl2, &headers2, &body2)).to_string();
+    let session_raw =
+        crate::session::run_session_rules(&state, "proxy", &host, port, false, &raw_for_session)
+            .await
+            .unwrap_or(raw_for_session);
+    let (rl2, headers2, body2) = split_message(&session_raw).unwrap_or((rl2, headers2, body2));
+
     let outbound = {
         let rules = state.match_replace.lock();
         db::process_with_rules(&rules, "request", &rebuild_request(&rl2, &headers2, &body2))
@@ -1332,6 +1339,13 @@ async fn handle_connect(
     let ext_req_raw = apply_ext_request_handlers(&state, &method, &url, &headers2, &body2);
     let (rl2, headers2, body2) =
         split_message(&ext_req_raw).unwrap_or((rl2, headers2, body2));
+
+    let raw_for_session = String::from_utf8_lossy(&rebuild_request(&rl2, &headers2, &body2)).to_string();
+    let session_raw =
+        crate::session::run_session_rules(&state, "proxy", &host, port, true, &raw_for_session)
+            .await
+            .unwrap_or(raw_for_session);
+    let (rl2, headers2, body2) = split_message(&session_raw).unwrap_or((rl2, headers2, body2));
 
     let started = std::time::Instant::now();
     let mut up = connect_upstream_read_tls(&host, port).await?;

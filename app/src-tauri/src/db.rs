@@ -1680,6 +1680,117 @@ impl Db {
         Ok(())
     }
 
+    // ----------------------------------------------------------- session (8b)
+
+    pub fn list_session_macros(&self) -> Result<Vec<crate::session::SessionMacro>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT id, name, requests FROM session_macros ORDER BY id")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                let id: i64 = r.get(0)?;
+                let name: String = r.get(1)?;
+                let requests_json: String = r.get(2)?;
+                let requests: Vec<String> =
+                    serde_json::from_str(&requests_json).unwrap_or_default();
+                Ok(crate::session::SessionMacro { id, name, requests })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_session_macro(&self, id: i64) -> Result<Option<crate::session::SessionMacro>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, name, requests FROM session_macros WHERE id = ?1",
+            params![id],
+            |r| {
+                let id: i64 = r.get(0)?;
+                let name: String = r.get(1)?;
+                let requests_json: String = r.get(2)?;
+                let requests: Vec<String> =
+                    serde_json::from_str(&requests_json).unwrap_or_default();
+                Ok(crate::session::SessionMacro { id, name, requests })
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn insert_session_macro(&self, name: &str, requests: &[String]) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        let json = serde_json::to_string(requests).map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO session_macros (name, requests) VALUES (?1,?2)",
+            params![name, json],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn delete_session_macro(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM session_macros WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn list_session_rules(&self) -> Result<Vec<crate::session::SessionRule>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, position, name, tool, match_host, macro_id, updates, enabled
+                 FROM session_rules ORDER BY position",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                let updates_json: String = r.get(6)?;
+                let updates: Vec<crate::session::SessionUpdate> =
+                    serde_json::from_str(&updates_json).unwrap_or_default();
+                Ok(crate::session::SessionRule {
+                    id: r.get(0)?,
+                    position: r.get(1)?,
+                    name: r.get(2)?,
+                    tool: r.get(3)?,
+                    match_host: r.get(4)?,
+                    macro_id: r.get(5)?,
+                    updates,
+                    enabled: r.get::<_, i64>(7)? != 0,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn insert_session_rule(
+        &self,
+        name: &str,
+        tool: &str,
+        match_host: &str,
+        macro_id: Option<i64>,
+        updates: &[crate::session::SessionUpdate],
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        let pos: i64 = conn
+            .query_row("SELECT COALESCE(MAX(position),0)+1 FROM session_rules", [], |r| r.get(0))
+            .unwrap_or(1);
+        let updates_json = serde_json::to_string(updates).map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO session_rules (position, name, tool, match_host, macro_id, updates, enabled)
+             VALUES (?1,?2,?3,?4,?5,?6,1)",
+            params![pos, name, tool, match_host, macro_id, updates_json],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn delete_session_rule(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM session_rules WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+
     // ----------------------------------------------------------- collaborator
 
     pub fn insert_collab_payload(

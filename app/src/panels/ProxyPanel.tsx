@@ -12,6 +12,9 @@ import {
   ProxyStatus,
   ScopeRule,
   statusClass,
+  SessionMacro,
+  SessionRule,
+  SessionUpdate,
   UpstreamRule,
   WsConn,
   WsFrame,
@@ -150,6 +153,15 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   const [upForm, setUpForm] = useState({ host_pattern: "", proxy_host: "", proxy_port: 3128, use_tls: false });
   const [passInput, setPassInput] = useState("");
   const [listenForm, setListenForm] = useState({ host: "127.0.0.1", port: 8081 });
+  const [macros, setMacros] = useState<SessionMacro[]>([]);
+  const [sessRules, setSessRules] = useState<SessionRule[]>([]);
+  const [macroForm, setMacroForm] = useState({ name: "", requests: "" });
+  const [ruleForm, setRuleForm] = useState({
+    name: "",
+    tool: "any",
+    match_host: "",
+    macro_id: "",
+  });
 
   useEffect(() => {
     invoke<ExtHookInfo>("extension_hooks")
@@ -184,6 +196,8 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
       invoke<UpstreamRule[]>("upstream_list").then(setUpstreams).catch(() => {});
       invoke<string[]>("pass_through_list").then(setPassList).catch(() => {});
       invoke<ProxyListenerSlot[]>("listener_list").then(setListeners).catch(() => {});
+      invoke<SessionMacro[]>("session_macro_list").then(setMacros).catch(() => {});
+      invoke<SessionRule[]>("session_rule_list").then(setSessRules).catch(() => {});
     }
   }, [sub, status.history_count, setToast]);
 
@@ -581,6 +595,50 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   async function removeListener(id: number) {
     await invoke("listener_remove", { id });
     setListeners(await invoke<ProxyListenerSlot[]>("listener_list"));
+  }
+
+  async function addMacro() {
+    const requests = macroForm.requests.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!macroForm.name || requests.length === 0) return;
+    try {
+      await invoke("session_macro_add", {
+        input: { name: macroForm.name, requests },
+      });
+      setMacros(await invoke<SessionMacro[]>("session_macro_list"));
+      setMacroForm({ name: "", requests: "" });
+    } catch (e) {
+      setToast(String(e));
+    }
+  }
+
+  async function deleteMacro(id: number) {
+    await invoke("session_macro_delete", { id });
+    setMacros(await invoke<SessionMacro[]>("session_macro_list"));
+  }
+
+  async function addSessRule() {
+    if (!ruleForm.name) return;
+    const updates: SessionUpdate[] = [];
+    try {
+      await invoke("session_rule_add", {
+        input: {
+          name: ruleForm.name,
+          tool: ruleForm.tool,
+          match_host: ruleForm.match_host,
+          macro_id: ruleForm.macro_id ? Number(ruleForm.macro_id) : null,
+          updates,
+        },
+      });
+      setSessRules(await invoke<SessionRule[]>("session_rule_list"));
+      setRuleForm({ name: "", tool: "any", match_host: "", macro_id: "" });
+    } catch (e) {
+      setToast(String(e));
+    }
+  }
+
+  async function deleteSessRule(id: number) {
+    await invoke("session_rule_delete", { id });
+    setSessRules(await invoke<SessionRule[]>("session_rule_list"));
   }
 
   const SUBS: [Sub, string, string?][] = [
@@ -1282,6 +1340,157 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
               />
               <button className="btn primary" onClick={addListener} disabled={!listenForm.port}>
                 Start listener
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h2>Session handling</h2>
+            <p className="muted">
+              Rules auto-update requests before they leave the proxy (e.g. refresh a session
+              token via a macro, then set the Cookie header).
+            </p>
+
+            <h3 style={{ margin: "12px 0 6px" }}>Macros</h3>
+            <table className="history" style={{ marginBottom: 12 }}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Requests</th>
+                  <th aria-label="Actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {macros.map((m) => (
+                  <tr key={m.id}>
+                    <td>{m.name}</td>
+                    <td>{m.requests.length}</td>
+                    <td>
+                      <button className="btn" onClick={() => deleteMacro(m.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {macros.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="muted">
+                      No macros.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="row" style={{ flexWrap: "wrap", marginBottom: 16 }}>
+              <input
+                className="input"
+                placeholder="Macro name"
+                value={macroForm.name}
+                onChange={(e) => setMacroForm({ ...macroForm, name: e.target.value })}
+                aria-label="Macro name"
+              />
+              <input
+                className="input grow"
+                placeholder="Raw requests, one per line (GET /login HTTP/1.1 …)"
+                value={macroForm.requests}
+                onChange={(e) => setMacroForm({ ...macroForm, requests: e.target.value })}
+                aria-label="Macro requests"
+              />
+              <button
+                className="btn primary"
+                onClick={addMacro}
+                disabled={!macroForm.name || !macroForm.requests.trim()}
+              >
+                Add macro
+              </button>
+            </div>
+
+            <h3 style={{ margin: "12px 0 6px" }}>Rules</h3>
+            <table className="history" style={{ marginBottom: 12 }}>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Tool</th>
+                  <th>Host</th>
+                  <th>Macro</th>
+                  <th aria-label="Actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessRules.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.position}</td>
+                    <td>{r.name}</td>
+                    <td>{r.tool}</td>
+                    <td className="mono">{r.match_host || "*"}</td>
+                    <td>
+                      {r.macro_id
+                        ? macros.find((m) => m.id === r.macro_id)?.name ?? r.macro_id
+                        : "—"}
+                    </td>
+                    <td>
+                      <button className="btn" onClick={() => deleteSessRule(r.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {sessRules.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      No session rules.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <input
+                className="input"
+                placeholder="Rule name"
+                value={ruleForm.name}
+                onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })}
+                aria-label="Session rule name"
+              />
+              <select
+                className="select"
+                value={ruleForm.tool}
+                onChange={(e) => setRuleForm({ ...ruleForm, tool: e.target.value })}
+                aria-label="Rule tool"
+              >
+                <option value="any">Any tool</option>
+                <option value="proxy">Proxy</option>
+                <option value="repeater">Repeater</option>
+                <option value="intruder">Intruder</option>
+                <option value="scanner">Scanner</option>
+              </select>
+              <input
+                className="input"
+                placeholder="Host pattern (blank = any)"
+                value={ruleForm.match_host}
+                onChange={(e) => setRuleForm({ ...ruleForm, match_host: e.target.value })}
+                aria-label="Rule host pattern"
+              />
+              <select
+                className="select"
+                value={ruleForm.macro_id}
+                onChange={(e) => setRuleForm({ ...ruleForm, macro_id: e.target.value })}
+                aria-label="Rule macro"
+              >
+                <option value="">No macro</option>
+                {macros.map((m) => (
+                  <option key={m.id} value={String(m.id)}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <button className="btn primary" onClick={addSessRule} disabled={!ruleForm.name}>
+                Add rule
               </button>
             </div>
           </section>

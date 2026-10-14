@@ -40,8 +40,8 @@ Auto Repeater / repeat rules (custom rule actions),session,should,yes,no,
 Project save/load (.wpt SQLite file),project,must,yes,no,persistent history/tabs/issues
 Extensions: JS plugin API (embedded engine),extensions,must,yes,yes,our own API - Burp BApp/Java cannot be cloned
 Extensions: HTTP handler / proxy listener / tab / context menu hooks,extensions,must,yes,yes,API surface; no custom columns/scanner checks in JS (v1 cut)
-Collaborator: local OOB server (DNS+HTTP),collaborator,must,yes,no,local domain/lab targets
-Collaborator: payload generation + interaction log,collaborator,must,yes,no,
+Collaborator: local OOB server (DNS+HTTP),collaborator,must,yes,yes,local domain/lab targets
+Collaborator: payload generation + interaction log,collaborator,must,yes,yes,
 Keyboard shortcuts + layout customization,ui,should,yes,no,
 Issue definitions / lint custom payloads,scanner,should,yes,no,catalog covered by scan config editor; custom payload lint deferred
 License activation / PortSwigger account,licensing,skip,yes,no,no license server; tool is local-only

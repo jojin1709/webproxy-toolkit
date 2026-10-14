@@ -196,3 +196,24 @@ CREATE TABLE IF NOT EXISTS extensions (
   created_at TEXT NOT NULL
 );
 
+
+-- Collaborator payloads (Phase 7)
+CREATE TABLE IF NOT EXISTS collab_payloads (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  label      TEXT NOT NULL DEFAULT '',
+  domain     TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Collaborator interactions (Phase 7)
+CREATE TABLE IF NOT EXISTS collab_interactions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  payload_id INTEGER,
+  subdomain  TEXT NOT NULL,
+  protocol   TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT '',
+  detail     TEXT NOT NULL DEFAULT '{}',
+  seen_at    TEXT NOT NULL
+);

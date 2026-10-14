@@ -191,6 +191,16 @@ def run():
         page.wait_for_timeout(500)
         shot(page, "48-ext-tab")
 
+        # ---- Phase 7: Collaborator ----
+        stage[0] = "collaborator"
+        tab(page, "Collaborator")
+        page.wait_for_timeout(400)
+        shot(page, "49-collaborator")
+        stage[0] = "collaborator payload select"
+        page.locator("#panel-collaborator .history tbody tr").first.click()
+        page.wait_for_timeout(300)
+        shot(page, "50-collaborator-interactions")
+
         # ---- Group A2: Phase 2a tools ----
         tab(page, "Proxy")
         stage[0] = "stage comparer 1"

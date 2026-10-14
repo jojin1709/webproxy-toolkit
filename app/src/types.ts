@@ -354,3 +354,30 @@ export type ExtHookInfo = {
   context_menus: ExtMenuItem[];
   tabs: ExtTabInfo[];
 };
+
+export type CollabStatus = {
+  running: boolean;
+  dns_port: number;
+  http_port: number;
+  domain: string;
+  bind_ip: string;
+};
+
+export type CollabPayload = {
+  id: number;
+  label: string;
+  domain: string;
+  kind: string;
+  value: string;
+  created_at: string;
+};
+
+export type CollabInteraction = {
+  id: number;
+  payload_id: number | null;
+  subdomain: string;
+  protocol: string;
+  source: string;
+  detail: Record<string, unknown>;
+  seen_at: string;
+};

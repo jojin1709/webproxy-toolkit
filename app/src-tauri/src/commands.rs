@@ -1038,6 +1038,14 @@ pub fn register(
             extension_read_file,
             extension_context_invoke,
             extension_tab_render,
+            collab_status,
+            collab_start,
+            collab_stop,
+            collab_new_payload,
+            collab_payload_list,
+            collab_delete_payload,
+            collab_interactions_list,
+            collab_clear_interactions,
         ])
 }
 
@@ -1961,6 +1969,85 @@ pub fn extension_tab_render(
     tab_id: u32,
 ) -> Result<String, String> {
     state.extensions.run_tab(ext_id, tab_id)
+}
+
+// ------------------------------------------------------- collaborator (7a)
+
+#[tauri::command]
+pub fn collab_status(state: State<'_, SharedProxy>) -> crate::collaborator::CollabStatus {
+    crate::collaborator::status_of(&state)
+}
+
+#[tauri::command]
+pub async fn collab_start(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    domain: String,
+    bind_ip: String,
+    dns_port: u16,
+    http_port: u16,
+) -> Result<crate::collaborator::CollabStatus, String> {
+    crate::collaborator::start_collab(&state, &domain, &bind_ip, dns_port, http_port).await?;
+    let s = crate::collaborator::status_of(&state);
+    log_event(
+        &app,
+        &state,
+        "collaborator",
+        "info",
+        &format!(
+            "Collaborator server started ({} DNS :{}, HTTP :{})",
+            s.domain, s.dns_port, s.http_port
+        ),
+    );
+    Ok(s)
+}
+
+#[tauri::command]
+pub fn collab_stop(app: AppHandle, state: State<'_, SharedProxy>) {
+    crate::collaborator::stop_collab(&state);
+    log_event(&app, &state, "collaborator", "info", "Collaborator server stopped");
+}
+
+#[tauri::command]
+pub fn collab_new_payload(
+    state: State<'_, SharedProxy>,
+    kind: String,
+    label: Option<String>,
+) -> Result<crate::collaborator::CollabPayload, String> {
+    if !matches!(kind.as_str(), "url" | "html" | "host") {
+        return Err(format!("unknown payload kind: {kind}"));
+    }
+    let domain = state.collab.domain.read().clone();
+    let sub = crate::collaborator::gen_subdomain();
+    let host = format!("{sub}.{domain}");
+    let value = crate::collaborator::make_payload_value(&kind, &host);
+    let now = chrono::Utc::now().to_rfc3339();
+    db_of(&state)?.insert_collab_payload(label.as_deref().unwrap_or(""), &domain, &kind, &value, &now)
+}
+
+#[tauri::command]
+pub fn collab_payload_list(
+    state: State<'_, SharedProxy>,
+) -> Result<Vec<crate::collaborator::CollabPayload>, String> {
+    db_of(&state)?.list_collab_payloads()
+}
+
+#[tauri::command]
+pub fn collab_delete_payload(state: State<'_, SharedProxy>, id: i64) -> Result<usize, String> {
+    db_of(&state)?.delete_collab_payload(id)
+}
+
+#[tauri::command]
+pub fn collab_interactions_list(
+    state: State<'_, SharedProxy>,
+    payload_id: Option<i64>,
+) -> Result<Vec<crate::collaborator::CollabInteraction>, String> {
+    db_of(&state)?.list_collab_interactions(payload_id)
+}
+
+#[tauri::command]
+pub fn collab_clear_interactions(state: State<'_, SharedProxy>) -> Result<usize, String> {
+    db_of(&state)?.clear_collab_interactions()
 }
 
 #[cfg(test)]

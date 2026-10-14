@@ -144,6 +144,11 @@ def run():
         page.wait_for_timeout(400)
         audit(page, "ext-tab")
 
+        # collaborator panel (Phase 7)
+        tab(page, "Collaborator")
+        page.wait_for_timeout(300)
+        audit(page, "collaborator")
+
         # context-menu Extensions section (Phase 6b)
         tab(page, "Proxy")
         page.locator(".history tbody tr").nth(1).click(button="right")

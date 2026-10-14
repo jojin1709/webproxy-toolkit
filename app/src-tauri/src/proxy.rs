@@ -59,6 +59,7 @@ pub struct ProxyState {
     pub intruder_runs: crate::intruder::IntruderRuns,
     pub scan_runs: crate::scanner::ScanRuns,
     pub extensions: Arc<crate::extensions::ExtRuntime>,
+    pub collab: crate::collaborator::CollabState,
 }
 
 impl Default for ProxyState {
@@ -80,6 +81,7 @@ impl Default for ProxyState {
             intruder_runs: crate::intruder::IntruderRuns::default(),
             scan_runs: crate::scanner::ScanRuns::default(),
             extensions: Arc::new(crate::extensions::ExtRuntime::new()),
+            collab: crate::collaborator::CollabState::default(),
         }
     }
 }

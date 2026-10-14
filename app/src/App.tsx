@@ -5,7 +5,6 @@ import "./index.css";
 import MenuBar from "./components/MenuBar";
 import ToolTabs from "./components/ToolTabs";
 import SearchDialog from "./components/SearchDialog";
-import Placeholder from "./components/Placeholder";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ProxyPanel from "./panels/ProxyPanel";
 import RepeaterPanel from "./panels/RepeaterPanel";
@@ -18,6 +17,7 @@ import SequencerPanel from "./panels/SequencerPanel";
 import IntruderPanel from "./panels/IntruderPanel";
 import LoggerPanel from "./panels/LoggerPanel";
 import ExtensionsPanel from "./panels/ExtensionsPanel";
+import CollaboratorPanel from "./panels/CollaboratorPanel";
 import { emptyStatus, ProxyStatus, SearchHit, TabId, Transfer } from "./types";
 
 export type SendTool = "repeater" | "intruder" | "decoder" | "comparer";
@@ -172,13 +172,7 @@ export default function App() {
           {tab === "sequencer" && <SequencerPanel setToast={setToast} />}
           {tab === "extensions" && <ExtensionsPanel setToast={setToast} />}
           {tab === "logger" && <LoggerPanel focus={logFocus} />}
-          {tab === "collaborator" && (
-            <Placeholder
-              id="panel-collaborator"
-              title="Collaborator"
-              description="The local out-of-band interaction server — DNS/HTTP payload registry and interaction log — arrives in Phase 7."
-            />
-          )}
+          {tab === "collaborator" && <CollaboratorPanel setToast={setToast} />}
         </ErrorBoundary>
       </main>
 

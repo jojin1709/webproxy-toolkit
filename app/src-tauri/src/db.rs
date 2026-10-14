@@ -1585,6 +1585,132 @@ impl Db {
         conn.execute("DELETE FROM extensions WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())
     }
+
+    // ----------------------------------------------------------- collaborator
+
+    pub fn insert_collab_payload(
+        &self,
+        label: &str,
+        domain: &str,
+        kind: &str,
+        value: &str,
+        created_at: &str,
+    ) -> Result<crate::collaborator::CollabPayload, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO collab_payloads (label, domain, kind, value, created_at)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![label, domain, kind, value, created_at],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(crate::collaborator::CollabPayload {
+            id: conn.last_insert_rowid(),
+            label: label.to_string(),
+            domain: domain.to_string(),
+            kind: kind.to_string(),
+            value: value.to_string(),
+            created_at: created_at.to_string(),
+        })
+    }
+
+    pub fn list_collab_payloads(
+        &self,
+    ) -> Result<Vec<crate::collaborator::CollabPayload>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, domain, kind, value, created_at
+                 FROM collab_payloads ORDER BY id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(crate::collaborator::CollabPayload {
+                    id: r.get(0)?,
+                    label: r.get(1)?,
+                    domain: r.get(2)?,
+                    kind: r.get(3)?,
+                    value: r.get(4)?,
+                    created_at: r.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn delete_collab_payload(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM collab_payloads WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn insert_collab_interaction(
+        &self,
+        payload_id: Option<&i64>,
+        subdomain: &str,
+        protocol: &str,
+        source: &str,
+        detail: &serde_json::Value,
+        seen_at: &str,
+    ) -> Result<crate::collaborator::CollabInteraction, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO collab_interactions (payload_id, subdomain, protocol, source, detail, seen_at)
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![payload_id, subdomain, protocol, source, detail.to_string(), seen_at],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(crate::collaborator::CollabInteraction {
+            id: conn.last_insert_rowid(),
+            payload_id: payload_id.copied(),
+            subdomain: subdomain.to_string(),
+            protocol: protocol.to_string(),
+            source: source.to_string(),
+            detail: detail.clone(),
+            seen_at: seen_at.to_string(),
+        })
+    }
+
+    pub fn list_collab_interactions(
+        &self,
+        payload_id: Option<i64>,
+    ) -> Result<Vec<crate::collaborator::CollabInteraction>, String> {
+        let conn = self.conn.lock();
+        let (sql, p): (&str, Option<i64>) = match payload_id {
+            Some(pid) => (
+                "SELECT id, payload_id, subdomain, protocol, source, detail, seen_at
+                 FROM collab_interactions WHERE payload_id = ?1 ORDER BY id DESC",
+                Some(pid),
+            ),
+            None => (
+                "SELECT id, payload_id, subdomain, protocol, source, detail, seen_at
+                 FROM collab_interactions ORDER BY id DESC",
+                None,
+            ),
+        };
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([p], |r| {
+                let detail_str: String = r.get(5)?;
+                Ok(crate::collaborator::CollabInteraction {
+                    id: r.get(0)?,
+                    payload_id: r.get(1)?,
+                    subdomain: r.get(2)?,
+                    protocol: r.get(3)?,
+                    source: r.get(4)?,
+                    detail: serde_json::from_str(&detail_str).unwrap_or(serde_json::Value::Null),
+                    seen_at: r.get(6)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn clear_collab_interactions(&self) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM collab_interactions", [])
+            .map_err(|e| e.to_string())
+    }
 }
 
 fn row_to_extension(r: &rusqlite::Row<'_>) -> rusqlite::Result<ExtensionRow> {

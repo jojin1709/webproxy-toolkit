@@ -316,6 +316,76 @@
     tabs: [{ ext_id: 1, tab_id: 0, title: "Hello tab" }],
   };
 
+  const collabStatus = {
+    running: true,
+    dns_port: 5354,
+    http_port: 8081,
+    domain: "oob.wpt.local",
+    bind_ip: "127.0.0.1",
+  };
+  const collabPayloads = [
+    {
+      id: 1,
+      label: "SSRF test",
+      domain: "oob.wpt.local",
+      kind: "url",
+      value: "http://a1b2c3d4.oob.wpt.local/",
+      created_at: "2026-10-11 10:01:00",
+    },
+    {
+      id: 2,
+      label: "",
+      domain: "oob.wpt.local",
+      kind: "html",
+      value: '<img src="http://e5f6a7b8.oob.wpt.local/x">',
+      created_at: "2026-10-11 10:02:00",
+    },
+  ];
+  const collabInteractions = [
+    {
+      id: 1,
+      payload_id: 1,
+      subdomain: "a1b2c3d4",
+      protocol: "dns",
+      source: "192.168.1.50",
+      detail: { name: "a1b2c3d4.oob.wpt.local", qtype: 1 },
+      seen_at: "2026-10-11 10:03:12",
+    },
+    {
+      id: 2,
+      payload_id: 1,
+      subdomain: "a1b2c3d4",
+      protocol: "http",
+      source: "192.168.1.50",
+      detail: {
+        method: "GET",
+        path: "/",
+        headers: [["Host", "a1b2c3d4.oob.wpt.local"]],
+        body: "",
+      },
+      seen_at: "2026-10-11 10:03:13",
+    },
+    {
+      id: 3,
+      payload_id: 2,
+      subdomain: "e5f6a7b8",
+      protocol: "dns",
+      source: "192.168.1.62",
+      detail: { name: "e5f6a7b8.oob.wpt.local", qtype: 1 },
+      seen_at: "2026-10-11 10:05:40",
+    },
+    {
+      id: 4,
+      payload_id: null,
+      subdomain: "deadbeef",
+      protocol: "dns",
+      source: "10.0.0.9",
+      detail: { name: "deadbeef.oob.wpt.local", qtype: 1 },
+      seen_at: "2026-10-11 10:07:01",
+    },
+  ];
+  let collabSeq = 3;
+
   const wsConns = [
     {
       id: 1,
@@ -1245,6 +1315,59 @@
       a && a.extId === 1 && a.tabId === 0
         ? "<h1>Hello tab</h1><p>Mock extension tab.</p>"
         : "<p>No tab</p>",
+    collab_status: () => ({ ...collabStatus }),
+    collab_start: (a) => {
+      collabStatus.running = true;
+      if (a && a.domain) collabStatus.domain = a.domain;
+      if (a && a.bindIp) collabStatus.bind_ip = a.bindIp;
+      if (a && a.dnsPort) collabStatus.dns_port = a.dnsPort;
+      if (a && a.httpPort) collabStatus.http_port = a.httpPort;
+      return { ...collabStatus };
+    },
+    collab_stop: () => {
+      collabStatus.running = false;
+      return null;
+    },
+    collab_new_payload: (a) => {
+      const kind = (a && a.kind) || "url";
+      const label = (a && a.label) || "";
+      const sub = Math.random().toString(16).slice(2, 10);
+      const host = `${sub}.${collabStatus.domain}`;
+      const value =
+        kind === "url"
+          ? `http://${host}/`
+          : kind === "html"
+            ? `<img src="http://${host}/x">`
+            : host;
+      const p = {
+        id: collabSeq++,
+        label,
+        domain: collabStatus.domain,
+        kind,
+        value,
+        created_at: "2026-10-11 10:10:00",
+      };
+      collabPayloads.unshift(p);
+      return { ...p };
+    },
+    collab_payload_list: () => collabPayloads.map((p) => ({ ...p })),
+    collab_delete_payload: (a) => {
+      const id = a && a.id;
+      const i = collabPayloads.findIndex((p) => p.id === id);
+      if (i >= 0) collabPayloads.splice(i, 1);
+      return i >= 0 ? 1 : 0;
+    },
+    collab_interactions_list: (a) => {
+      const pid = a && a.payloadId;
+      return collabInteractions
+        .filter((x) => pid == null || x.payload_id === pid)
+        .map((x) => ({ ...x, detail: { ...x.detail } }));
+    },
+    collab_clear_interactions: () => {
+      const n = collabInteractions.length;
+      collabInteractions.length = 0;
+      return n;
+    },
   };
 
   const callbacks = {};

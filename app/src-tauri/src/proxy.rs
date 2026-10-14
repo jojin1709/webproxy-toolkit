@@ -58,6 +58,7 @@ pub struct ProxyState {
     pub app_handle: parking_lot::RwLock<Option<AppHandle>>,
     pub intruder_runs: crate::intruder::IntruderRuns,
     pub scan_runs: crate::scanner::ScanRuns,
+    pub extensions: Arc<crate::extensions::ExtRuntime>,
 }
 
 impl Default for ProxyState {
@@ -78,6 +79,7 @@ impl Default for ProxyState {
             app_handle: parking_lot::RwLock::new(None),
             intruder_runs: crate::intruder::IntruderRuns::default(),
             scan_runs: crate::scanner::ScanRuns::default(),
+            extensions: Arc::new(crate::extensions::ExtRuntime::new()),
         }
     }
 }
@@ -167,6 +169,39 @@ fn rebuild_request(request_line: &str, headers: &[(String, String)], body: &[u8]
         out.extend_from_slice(v.as_bytes());
         out.extend_from_slice(b"\r\n");
     }
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(body);
+    out
+}
+
+fn rebuild_response(status: u16, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let reason = match status {
+        200 => "OK",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "",
+    };
+    out.extend_from_slice(format!("HTTP/1.1 {} {}\r\n", status, reason).as_bytes());
+    for (k, v) in headers {
+        if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding") {
+            continue;
+        }
+        out.extend_from_slice(k.as_bytes());
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body);
     out
@@ -424,6 +459,100 @@ async fn maybe_intercept(
     }
 }
 
+/// Parse `[[k, v], ...]` header pairs from extension output; None if malformed.
+fn parse_header_pairs(v: &serde_json::Value) -> Option<Vec<(String, String)>> {
+    let arr = v.as_array()?;
+    Some(
+        arr.iter()
+            .filter_map(|p| {
+                let p = p.as_array()?;
+                Some((
+                    p.first()?.as_str()?.to_string(),
+                    p.get(1)?.as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// Build a message JSON for the request phase and run it through extension HTTP handlers.
+/// Returns the (possibly modified) raw request string.
+fn apply_ext_request_handlers(
+    state: &SharedProxy,
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> String {
+    let msg = serde_json::json!({
+        "request": {
+            "method": method,
+            "url": url,
+            "headers": headers.iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>(),
+            "body": String::from_utf8_lossy(body),
+        },
+        "response": null,
+    });
+    let out = state.extensions.run_http_handlers(msg);
+    let req = &out["request"];
+    let method = req["method"].as_str().unwrap_or(method).to_string();
+    let url = req["url"].as_str().unwrap_or(url).to_string();
+    let headers: Vec<(String, String)> = parse_header_pairs(&req["headers"]).unwrap_or_else(|| headers.to_vec());
+    let body = req["body"].as_str().map(|s| s.as_bytes().to_vec()).unwrap_or_else(|| body.to_vec());
+    let target = url::Url::parse(&url)
+        .ok()
+        .map(|u| {
+            format!(
+                "{}{}",
+                u.path(),
+                u.query().map(|q| format!("?{q}")).unwrap_or_default()
+            )
+        })
+        .unwrap_or_else(|| url.clone());
+    String::from_utf8_lossy(&rebuild_request(
+        &format!("{method} {target} HTTP/1.1"),
+        &headers,
+        &body,
+    ))
+    .into_owned()
+}
+
+/// Build a message JSON for the response phase and run it through extension HTTP handlers.
+/// Returns the (possibly modified) raw response string.
+fn apply_ext_response_handlers(
+    state: &SharedProxy,
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+    req_method: &str,
+    req_url: &str,
+    req_headers: &[(String, String)],
+    req_body: &[u8],
+) -> String {
+    let msg = serde_json::json!({
+        "request": {
+            "method": req_method,
+            "url": req_url,
+            "headers": req_headers.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>(),
+            "body": String::from_utf8_lossy(req_body),
+        },
+        "response": {
+            "status": status,
+            "headers": headers.iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>(),
+            "body": String::from_utf8_lossy(body),
+        },
+    });
+    let out = state.extensions.run_http_handlers(msg);
+    let resp = &out["response"];
+    if resp.is_null() {
+        return String::from_utf8_lossy(&rebuild_response(status, headers, body)).into_owned();
+    }
+    let status = resp["status"].as_u64().unwrap_or(status as u64) as u16;
+    let headers: Vec<(String, String)> = parse_header_pairs(&resp["headers"]).unwrap_or_else(|| headers.to_vec());
+    let body = resp["body"].as_str().map(|s| s.as_bytes().to_vec()).unwrap_or_else(|| body.to_vec());
+    String::from_utf8_lossy(&rebuild_response(status, &headers, &body)).into_owned()
+}
+
 fn record_exchange(
     state: &SharedProxy,
     peer: String,
@@ -473,6 +602,21 @@ fn record_exchange(
             }
         });
     }
+    let proxy_payload = serde_json::json!({
+        "id": id,
+        "host": ex.host,
+        "method": ex.method,
+        "url": ex.url,
+        "req_headers": ex.req_headers.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>(),
+        "req_body": ex.req_body.clone().unwrap_or_default(),
+        "status": ex.status,
+        "resp_headers": ex.resp_headers.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>(),
+        "resp_body": ex.resp_body.clone().unwrap_or_default(),
+        "tls": ex.tls,
+        "websocket": ex.websocket,
+    });
+    state.extensions.run_proxy_listeners(&proxy_payload);
+
     let mut h = state.history.lock();
     h.push(ex);
     if h.len() > 20_000 {
@@ -766,6 +910,11 @@ async fn handle_conn(state: SharedProxy, mut stream: TcpStream, peer: String) ->
     let ws_upgrade_req = header_get(&headers2, "upgrade")
         .map(|v| v.to_ascii_lowercase().contains("websocket"))
         .unwrap_or(false);
+
+    let ext_req_raw = apply_ext_request_handlers(&state, &method, &url, &headers2, &body2);
+    let (rl2, headers2, body2) =
+        split_message(&ext_req_raw).unwrap_or((rl2, headers2, body2));
+
     let outbound = {
         let rules = state.match_replace.lock();
         db::process_with_rules(&rules, "request", &rebuild_request(&rl2, &headers2, &body2))
@@ -814,6 +963,19 @@ async fn handle_conn(state: SharedProxy, mut stream: TcpStream, peer: String) ->
         }
     }
     let ws_open = ws_upgrade_req && status == 101;
+    if !ws_open {
+        resp_out = apply_ext_response_handlers(
+            &state,
+            status,
+            &resp_headers,
+            &resp_body,
+            &method,
+            &url,
+            &headers2,
+            &body2,
+        )
+        .into_bytes();
+    }
     stream.write_all(&resp_out).await.map_err(|e| e.to_string())?;
     if !ws_open {
         let _ = stream.shutdown().await;
@@ -958,6 +1120,11 @@ async fn handle_connect(
         .map(|v| v.to_ascii_lowercase().contains("websocket"))
         .unwrap_or(false);
 
+    let method = rl2.split_whitespace().next().unwrap_or("GET").to_string();
+    let ext_req_raw = apply_ext_request_handlers(&state, &method, &url, &headers2, &body2);
+    let (rl2, headers2, body2) =
+        split_message(&ext_req_raw).unwrap_or((rl2, headers2, body2));
+
     let started = std::time::Instant::now();
     let mut up = connect_upstream_read_tls(&host, port).await?;
     let outbound = {
@@ -1000,6 +1167,19 @@ async fn handle_connect(
         }
     }
     let ws_open = ws_upgrade_req && status == 101;
+    if !ws_open {
+        resp_out = apply_ext_response_handlers(
+            &state,
+            status,
+            &resp_headers,
+            &resp_body,
+            &method,
+            &url,
+            &headers2,
+            &body2,
+        )
+        .into_bytes();
+    }
     tls_stream.write_all(&resp_out).await.map_err(|e| e.to_string())?;
     if !ws_open {
         let _ = tls_stream.shutdown().await;

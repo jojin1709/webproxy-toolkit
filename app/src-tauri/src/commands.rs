@@ -922,10 +922,35 @@ pub fn register(
             use tauri::Manager;
             let handle = app.handle().clone();
             let st = handle.state::<SharedProxy>();
+            *st.app_handle.write() = Some(handle.clone());
+            // extension engine: log sink → Logger (tool "extensions")
+            {
+                let st2 = st.inner().clone();
+                let h2 = handle.clone();
+                st.extensions.set_log_sink(Arc::new(move |level: &str, msg: &str| {
+                    log_event(&h2, &st2, "extensions", level, msg);
+                }));
+            }
             if let Ok(dir) = app_data_dir() {
                 match crate::ca::load_or_create(&dir) {
                     Ok(ca) => *st.ca.write() = Some(ca),
                     Err(e) => eprintln!("ca init failed: {e}"),
+                }
+            }
+            // load enabled extensions at startup (best-effort)
+            if let Ok(db) = db_of(&st) {
+                for row in db.list_extensions().unwrap_or_default().into_iter().filter(|r| r.enabled) {
+                    match std::fs::read_to_string(&row.path) {
+                        Ok(source) => {
+                            if let Err(e) = st.extensions.load_extension(row.id, &source) {
+                                let _ = db.set_extension_error(row.id, Some(&e));
+                                eprintln!("extension #{} failed to load: {e}", row.id);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = db.set_extension_error(row.id, Some(&e.to_string()));
+                        }
+                    }
                 }
             }
             if let Ok(p) = std::env::var("WEBPROXY_AUTOSTART") {
@@ -1005,6 +1030,14 @@ pub fn register(
             scan_config_get,
             scan_config_save,
             scan_config_delete,
+            extension_list,
+            extension_hooks,
+            extension_load,
+            extension_set_enabled,
+            extension_delete,
+            extension_read_file,
+            extension_context_invoke,
+            extension_tab_render,
         ])
 }
 
@@ -1723,6 +1756,211 @@ pub fn scan_config_delete(state: State<'_, SharedProxy>, config_id: i64) -> Resu
     } else {
         Ok(())
     }
+}
+
+// ---------------------------------------------------------- extensions (6a)
+
+/// One row for the Extensions panel: db metadata + live hook info + error count.
+#[derive(serde::Serialize)]
+pub struct ExtensionView {
+    #[serde(flatten)]
+    pub row: crate::db::ExtensionRow,
+    pub hook_errors: u32,
+}
+
+#[tauri::command]
+pub fn extension_list(state: State<'_, SharedProxy>) -> Result<Vec<ExtensionView>, String> {
+    let rows = db_of(&state)?.list_extensions()?;
+    let errors: std::collections::HashMap<i64, u32> =
+        state.extensions.error_counts().into_iter().collect();
+    Ok(rows
+        .into_iter()
+        .map(|row| ExtensionView {
+            hook_errors: errors.get(&row.id).copied().unwrap_or(0),
+            row,
+        })
+        .collect())
+}
+
+/// Registered context-menu items + tabs across loaded extensions.
+#[tauri::command]
+pub fn extension_hooks(state: State<'_, SharedProxy>) -> crate::extensions::ExtHookInfo {
+    state.extensions.hook_info()
+}
+
+/// Load (or reload) an extension file into the engine. `path` must exist on disk.
+/// `ext_id` is optional — when given, reloads that row; otherwise inserts a new row.
+#[tauri::command]
+pub fn extension_load(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    path: String,
+    ext_id: Option<i64>,
+) -> Result<i64, String> {
+    let source = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let db = db_of(&state)?;
+    let id = match ext_id {
+        Some(existing) => {
+            let row = db
+                .get_extension(existing)?
+                .ok_or_else(|| format!("extension {existing} not found"))?;
+            row.id
+        }
+        None => {
+            let name = std::path::Path::new(&path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            db.insert_extension(&name, &path)?
+        }
+    };
+    match state.extensions.load_extension(id, &source) {
+        Ok(hooks) => {
+            db.set_extension_error(id, None)?;
+            log_event(
+                &app,
+                &state,
+                "extensions",
+                "info",
+                &format!(
+                    "Loaded extension #{id} ({path}) — {} menu item(s), {} tab(s)",
+                    hooks.context_menus.len(),
+                    hooks.tabs.len()
+                ),
+            );
+            Ok(id)
+        }
+        Err(e) => {
+            db.set_extension_error(id, Some(&e))?;
+            state.extensions.unload_extension(id);
+            log_event(
+                &app,
+                &state,
+                "extensions",
+                "error",
+                &format!("Extension #{id} failed to load: {e}"),
+            );
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn extension_set_enabled(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    ext_id: i64,
+    enabled: bool,
+) -> Result<(), String> {
+    let db = db_of(&state)?;
+    let row = db
+        .get_extension(ext_id)?
+        .ok_or_else(|| format!("extension {ext_id} not found"))?;
+    db.set_extension_enabled(ext_id, enabled)?;
+    if enabled {
+        // (re)load into engine
+        let source =
+            std::fs::read_to_string(&row.path).map_err(|e| format!("cannot read {}: {e}", row.path))?;
+        match state.extensions.load_extension(ext_id, &source) {
+            Ok(_) => {
+                db.set_extension_error(ext_id, None)?;
+                log_event(
+                    &app,
+                    &state,
+                    "extensions",
+                    "info",
+                    &format!("Enabled extension #{ext_id} ({})", row.name),
+                );
+            }
+            Err(e) => {
+                db.set_extension_error(ext_id, Some(&e))?;
+                log_event(
+                    &app,
+                    &state,
+                    "extensions",
+                    "error",
+                    &format!("Extension #{ext_id} failed on enable: {e}"),
+                );
+                return Err(e);
+            }
+        }
+    } else {
+        state.extensions.unload_extension(ext_id);
+        log_event(
+            &app,
+            &state,
+            "extensions",
+            "info",
+            &format!("Disabled extension #{ext_id} ({})", row.name),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn extension_delete(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    ext_id: i64,
+) -> Result<(), String> {
+    state.extensions.unload_extension(ext_id);
+    let n = db_of(&state)?.delete_extension(ext_id)?;
+    if n == 0 {
+        return Err(format!("extension {ext_id} not found"));
+    }
+    log_event(
+        &app,
+        &state,
+        "extensions",
+        "info",
+        &format!("Removed extension #{ext_id}"),
+    );
+    Ok(())
+}
+
+/// Read an extension file's source (for the editor / preview before load).
+#[tauri::command]
+pub fn extension_read_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("cannot read {path}: {e}"))
+}
+
+/// Invoke a registered context-menu item with the selected message.
+#[tauri::command]
+pub fn extension_context_invoke(
+    app: AppHandle,
+    state: State<'_, SharedProxy>,
+    ext_id: i64,
+    menu_id: u32,
+    message: serde_json::Value,
+) -> Result<(), String> {
+    let r = state.extensions.run_context_menu(ext_id, menu_id, &message);
+    match &r {
+        Ok(()) => log_event(
+            &app,
+            &state,
+            "extensions",
+            "info",
+            &format!("Context menu invoked (ext #{ext_id}, menu {menu_id})"),
+        ),
+        Err(e) => log_event(
+            &app,
+            &state,
+            "extensions",
+            "error",
+            &format!("Context menu failed (ext #{ext_id}): {e}"),
+        ),
+    }
+    r
+}
+
+/// Render a registered extension tab; returns an HTML string.
+#[tauri::command]
+pub fn extension_tab_render(
+    state: State<'_, SharedProxy>,
+    ext_id: i64,
+    tab_id: u32,
+) -> Result<String, String> {
+    state.extensions.run_tab(ext_id, tab_id)
 }
 
 #[cfg(test)]

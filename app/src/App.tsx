@@ -17,6 +17,7 @@ import ComparerPanel from "./panels/ComparerPanel";
 import SequencerPanel from "./panels/SequencerPanel";
 import IntruderPanel from "./panels/IntruderPanel";
 import LoggerPanel from "./panels/LoggerPanel";
+import ExtensionsPanel from "./panels/ExtensionsPanel";
 import { emptyStatus, ProxyStatus, SearchHit, TabId, Transfer } from "./types";
 
 export type SendTool = "repeater" | "intruder" | "decoder" | "comparer";
@@ -169,13 +170,7 @@ export default function App() {
           {tab === "intruder" && <IntruderPanel incoming={toIntruder} setToast={setToast} />}
           {tab === "comparer" && <ComparerPanel incoming={toComparer} setToast={setToast} />}
           {tab === "sequencer" && <SequencerPanel setToast={setToast} />}
-          {tab === "extensions" && (
-            <Placeholder
-              id="panel-extensions"
-              title="Extensions"
-              description="The JavaScript plugin API — HTTP handlers, custom tabs, context-menu items, editor decorations — arrives in Phase 6."
-            />
-          )}
+          {tab === "extensions" && <ExtensionsPanel setToast={setToast} />}
           {tab === "logger" && <LoggerPanel focus={logFocus} />}
           {tab === "collaborator" && (
             <Placeholder

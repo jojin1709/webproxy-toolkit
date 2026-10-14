@@ -166,6 +166,31 @@ def run():
         page.wait_for_timeout(400)
         shot(page, "45-audit-log")
 
+        # ---- Phase 6a: Extensions panel ----
+        stage[0] = "extensions panel"
+        tab(page, "Extensions")
+        page.wait_for_timeout(400)
+        shot(page, "46-extensions")
+
+        # ---- Phase 6b: context-menu Extensions section ----
+        stage[0] = "ext context menu"
+        tab(page, "Proxy")
+        page.locator(".history tbody tr").nth(1).click(button="right")
+        page.wait_for_timeout(300)
+        shot(page, "47-ext-context-menu")
+        stage[0] = "ext context menu invoke"
+        page.get_by_role("menuitem", name="Hash selection").click()
+        page.wait_for_timeout(300)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+
+        # ---- Phase 6c: extension tab (sandboxed iframe) ----
+        stage[0] = "ext tab"
+        tab(page, "Extensions")
+        page.get_by_role("tab", name="Hello tab").click()
+        page.wait_for_timeout(500)
+        shot(page, "48-ext-tab")
+
         # ---- Group A2: Phase 2a tools ----
         tab(page, "Proxy")
         stage[0] = "stage comparer 1"

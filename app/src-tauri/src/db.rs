@@ -216,6 +216,18 @@ pub struct ScanConfig {
     pub created_at: String,
 }
 
+/// One installed JS extension.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ExtensionRow {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub enabled: bool,
+    pub error: Option<String>,
+    pub loaded_at: Option<String>,
+    pub created_at: String,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     blob_dir: PathBuf,
@@ -1507,6 +1519,84 @@ impl Db {
         conn.execute("DELETE FROM scan_configs WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())
     }
+
+    // ----------------------------------------------------------- extensions
+
+    pub fn list_extensions(&self) -> Result<Vec<ExtensionRow>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, path, enabled, error, loaded_at, created_at
+                 FROM extensions ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], row_to_extension)
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_extension(&self, id: i64) -> Result<Option<ExtensionRow>, String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT id, name, path, enabled, error, loaded_at, created_at
+             FROM extensions WHERE id = ?1",
+            params![id],
+            row_to_extension,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn insert_extension(&self, name: &str, path: &str) -> Result<i64, String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO extensions (name, path, enabled, created_at) VALUES (?1,?2,1,?3)",
+            params![name, path, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn set_extension_enabled(&self, id: i64, enabled: bool) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE extensions SET enabled = ?2 WHERE id = ?1",
+            params![id, enabled as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn set_extension_error(&self, id: i64, error: Option<&str>) -> Result<(), String> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE extensions SET error = ?2, loaded_at = ?3 WHERE id = ?1",
+            params![id, error, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_extension(&self, id: i64) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM extensions WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn row_to_extension(r: &rusqlite::Row<'_>) -> rusqlite::Result<ExtensionRow> {
+    Ok(ExtensionRow {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        path: r.get(2)?,
+        enabled: r.get::<_, i64>(3)? != 0,
+        error: r.get(4)?,
+        loaded_at: r.get(5)?,
+        created_at: r.get(6)?,
+    })
 }
 
 fn row_to_scan_config(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScanConfig> {
@@ -2043,5 +2133,26 @@ mod tests {
         assert_eq!(db.delete_scan_config(id).unwrap(), 1);
         assert!(db.get_scan_config(id).unwrap().is_none());
         assert_eq!(db.list_scan_configs().unwrap().len(), 1); // seed remains
+    }
+
+    #[test]
+    fn extension_crud() {
+        let db = temp_db("ext");
+        let id = db.insert_extension("My ext", "C:/exts/my.js").unwrap();
+        let list = db.list_extensions().unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].enabled);
+        assert_eq!(list[0].name, "My ext");
+
+        db.set_extension_error(id, Some("boom")).unwrap();
+        let e = db.get_extension(id).unwrap().expect("ext");
+        assert_eq!(e.error.as_deref(), Some("boom"));
+        assert!(e.loaded_at.is_some());
+
+        db.set_extension_enabled(id, false).unwrap();
+        assert!(!db.get_extension(id).unwrap().expect("ext").enabled);
+
+        assert_eq!(db.delete_extension(id).unwrap(), 1);
+        assert!(db.list_extensions().unwrap().is_empty());
     }
 }

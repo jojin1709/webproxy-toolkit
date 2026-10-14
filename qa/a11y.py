@@ -134,6 +134,24 @@ def run():
         page.wait_for_timeout(300)
         audit(page, "dashboard-audit-log")
 
+        # extensions panel (Phase 6a)
+        tab(page, "Extensions")
+        page.wait_for_timeout(300)
+        audit(page, "extensions")
+
+        # extension tab iframe (Phase 6c)
+        page.get_by_role("tab", name="Hello tab").click()
+        page.wait_for_timeout(400)
+        audit(page, "ext-tab")
+
+        # context-menu Extensions section (Phase 6b)
+        tab(page, "Proxy")
+        page.locator(".history tbody tr").nth(1).click(button="right")
+        page.wait_for_timeout(300)
+        audit(page, "ext-context-menu")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+
         # search dialog (combobox/listbox/selected hit contrast)
         tab(page, "Proxy")
         page.locator('button[aria-label="Search"]').click()

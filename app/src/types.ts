@@ -325,3 +325,32 @@ export type ScanConfig = {
   is_default: boolean;
   created_at: string;
 };
+
+export type ExtensionView = {
+  id: number;
+  name: string;
+  path: string;
+  enabled: boolean;
+  error: string | null;
+  loaded_at: string | null;
+  created_at: string;
+  hook_errors: number;
+};
+
+export type ExtMenuItem = {
+  ext_id: number;
+  menu_id: number;
+  label: string;
+  scope: string;
+};
+
+export type ExtTabInfo = {
+  ext_id: number;
+  tab_id: number;
+  title: string;
+};
+
+export type ExtHookInfo = {
+  context_menus: ExtMenuItem[];
+  tabs: ExtTabInfo[];
+};

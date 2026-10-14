@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronRight, HelpCircle, Pencil, Settings } from "lucide-react";
-import { RepeaterHistoryEntry, RepeaterTab, Transfer } from "../types";
+import { ExtHookInfo, ExtMenuItem, RepeaterHistoryEntry, RepeaterTab, Transfer } from "../types";
 import MessageView from "../components/MessageView";
 import SplitPane from "../components/SplitPane";
+import { useContextMenu } from "../components/ContextMenu";
 
 type Props = {
   incoming: Transfer | null;
@@ -47,6 +48,14 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
   const [follow, setFollow] = useState(false);
   const [hist, setHist] = useState<RepeaterHistoryEntry[]>([]);
   const [histIdx, setHistIdx] = useState<number | null>(null);
+  const [extMenus, setExtMenus] = useState<ExtMenuItem[]>([]);
+  const { open: openCtx, close: closeCtx, node: ctxNode, isOpen: menuOpen } = useContextMenu();
+
+  useEffect(() => {
+    invoke<ExtHookInfo>("extension_hooks")
+      .then((info) => setExtMenus(info.context_menus))
+      .catch(() => setExtMenus([]));
+  }, []);
 
   async function loadHistory(tabId: number | null) {
     if (tabId == null) {
@@ -238,6 +247,57 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
   }
 
   const inspector = useMemo(() => parseRequest(draft.req), [draft.req]);
+
+  function customActionsMenu(e: React.MouseEvent<HTMLButtonElement>) {
+    if (menuOpen) {
+      closeCtx();
+      return;
+    }
+    if (extMenus.length === 0) {
+      setToast("No extension actions registered");
+      return;
+    }
+    const parsed = parseRequest(draft.req);
+    const lines = draft.req.split(/\r?\n/);
+    let bi = 1;
+    for (; bi < lines.length; bi++) {
+      if (lines[bi] === "") break;
+    }
+    const body = lines.slice(bi + 1).join("\n");
+    let base = urlHint || "";
+    if (base && !base.endsWith("/")) base += "/";
+    const url = /^https?:\/\//.test(parsed.target)
+      ? parsed.target
+      : base + parsed.target.replace(/^\//, "");
+    const message = {
+      request: {
+        method: parsed.method,
+        url,
+        headers: parsed.headers,
+        body,
+      },
+      response: null,
+    };
+    const rect = e.currentTarget.getBoundingClientRect();
+    openCtx(
+      e,
+      [
+        { label: "Extensions", disabled: true },
+        ...extMenus.map((m) => ({
+          label: m.label,
+          onClick: () =>
+            invoke("extension_context_invoke", {
+              extId: m.ext_id,
+              menuId: m.menu_id,
+              message,
+            })
+              .then(() => setToast(`Ran extension action: ${m.label}`))
+              .catch((err) => setToast(String(err))),
+        })),
+      ],
+      { x: rect.left, y: rect.bottom + 4 }
+    );
+  }
 
   return (
     <div className="panel" role="tabpanel" aria-label="Repeater" id="panel-repeater">
@@ -495,11 +555,19 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
           <button disabled title="Notes arrive in Phase 2">
             Notes
           </button>
-          <button disabled title="Custom actions arrive with extensions (Phase 6)">
+          <button
+            title={
+              extMenus.length === 0
+                ? "No extension actions registered"
+                : "Run extension context-menu actions on the current request"
+            }
+            onClick={customActionsMenu}
+          >
             Custom actions
           </button>
         </nav>
       </div>
+      {ctxNode}
     </div>
   );
 }

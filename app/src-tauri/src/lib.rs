@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod ca;
+pub mod extensions;
 pub mod intruder;
 pub mod proxy;
 pub mod scanner;

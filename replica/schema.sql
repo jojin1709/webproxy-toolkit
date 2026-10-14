@@ -185,3 +185,14 @@ CREATE TABLE IF NOT EXISTS scan_configs (
   created_at       TEXT NOT NULL
 );
 
+-- installed JS extensions (Phase 6)
+CREATE TABLE IF NOT EXISTS extensions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  error      TEXT,
+  loaded_at  TEXT,
+  created_at TEXT NOT NULL
+);
+

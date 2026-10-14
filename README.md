@@ -13,7 +13,7 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 | 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | done |
 | 3 | Intruder (attack engine, positions, payload sets, results) | done |
 | 4 | Passive scanner, Issues view, active audit, crawling, scan configs | done |
-| 6 | Extensions (embedded JS engine, Burp-like extension API) | planned |
+| 6 | Extensions (embedded JS engine, Burp-like extension API) | done |
 | 7 | Collaborator (local out-of-band interaction server) | planned |
 | 8 | Session handling & macros, upstream proxy, TLS options, multi-listener, shortcuts | planned |
 
@@ -28,6 +28,7 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 - **Logger** — persistent event log (proxy, repeater, scope, scanner, system) with tool/level/text filters, also embedded in the Dashboard (Audit log tab filters to scanner).
 - **Decoder** — encode/decode transforms (URL, Base64, hex, …).
 - **Scanner** — passive checks on every in-scope response (17 header/cookie/banner/info-leak checks), active audit engine that crawls a target and tests parameters (SQL injection, reflected XSS, path traversal, open redirect, sensitive files), issue framework with dedupe/severity/confidence, issue detail with linked exchange, named scan configs (limits, threads, throttle, enabled checks) with an issue-definitions catalog, and Dashboard scan tasks with live progress + pause/resume/cancel.
+- **Extensions** — embedded QuickJS engine with our own `wpt` JavaScript API: proxy listeners, HTTP handlers (request/response rewriting in the relay), context-menu actions in Proxy and Repeater, and custom report tabs rendered in sandboxed iframes; per-extension error latch (disable after 5 consecutive failures) with an error console in the Extensions panel.
 - **Dashboard** — project summary, scan tasks (crawl/audit) with live progress, issues with severity counts, event log, scanner audit log.
 - **A11y & theme** — full keyboard navigation, ARIA roles, WCAG AA contrast, dark Burp-like theme, responsive down to ~1000 px.
 

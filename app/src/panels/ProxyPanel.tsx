@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  ExtHookInfo,
+  ExtMenuItem,
   HeldInfo,
   HttpExchange,
   headersToText,
@@ -139,6 +141,13 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   const [wsFrameSel, setWsFrameSel] = useState<WsFrame | null>(null);
   const [wsShowHs, setWsShowHs] = useState(false);
   const wsSelIdRef = useRef<number | null>(null);
+  const [extMenus, setExtMenus] = useState<ExtMenuItem[]>([]);
+
+  useEffect(() => {
+    invoke<ExtHookInfo>("extension_hooks")
+      .then((info) => setExtMenus(info.context_menus))
+      .catch(() => setExtMenus([]));
+  }, []);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -370,6 +379,35 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
     setSelected(visible[next]);
   }
 
+  function extMessageFor(ex: HttpExchange) {
+    return {
+      request: {
+        method: ex.method,
+        url: ex.url,
+        headers: ex.req_headers,
+        body: ex.req_body ?? "",
+      },
+      response:
+        ex.status == null
+          ? null
+          : {
+              status: ex.status,
+              headers: ex.resp_headers,
+              body: ex.resp_body ?? "",
+            },
+    };
+  }
+
+  function runExtAction(m: ExtMenuItem, message: unknown) {
+    invoke("extension_context_invoke", {
+      extId: m.ext_id,
+      menuId: m.menu_id,
+      message,
+    })
+      .then(() => setToast(`Ran extension action: ${m.label}`))
+      .catch((e) => setToast(String(e)));
+  }
+
   function rowMenu(ex: HttpExchange): MenuItem[] {
     const addScope = () =>
       invoke("scope_add", { mode: "include", kind: "host", pattern: ex.host })
@@ -383,6 +421,17 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
           .catch((e) => setToast(String(e)));
       else setToast("No matching scope rule");
     };
+    const extItems: MenuItem[] =
+      extMenus.length === 0
+        ? []
+        : [
+            { sep: true },
+            { label: "Extensions", disabled: true },
+            ...extMenus.map((m) => ({
+              label: m.label,
+              onClick: () => runExtAction(m, extMessageFor(ex)),
+            })),
+          ];
     return [
       { label: "Send to Repeater", hint: "Ctrl+R", onClick: () => sendTo("repeater", { raw: rawRequest(ex), url: ex.url }) },
       { label: "Send to Intruder", hint: "Ctrl+I", onClick: () => sendTo("intruder", { raw: rawRequest(ex), url: ex.url }) },
@@ -394,6 +443,7 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
       { sep: true },
       { label: "Copy URL", onClick: () => copyText(ex.url, "URL") },
       { label: "Copy request", onClick: () => copyText(rawRequest(ex), "Request") },
+      ...extItems,
     ];
   }
 

@@ -288,6 +288,34 @@
     },
   ];
 
+  let extSeq = 2;
+  const extensions = [
+    {
+      id: 1,
+      name: "hello",
+      path: "C:\\ext\\hello.js",
+      enabled: true,
+      error: null,
+      loaded_at: "2026-10-11 09:05:00",
+      created_at: "2026-10-11 09:05:00",
+      hook_errors: 0,
+    },
+    {
+      id: 2,
+      name: "broken",
+      path: "C:\\ext\\broken.js",
+      enabled: true,
+      error: "eval error: boom",
+      loaded_at: null,
+      created_at: "2026-10-11 09:06:00",
+      hook_errors: 1,
+    },
+  ];
+  const extHooks = {
+    context_menus: [{ ext_id: 1, menu_id: 0, label: "Hash selection", scope: "message" }],
+    tabs: [{ ext_id: 1, tab_id: 0, title: "Hello tab" }],
+  };
+
   const wsConns = [
     {
       id: 1,
@@ -1167,6 +1195,56 @@
       scanConfigs.splice(i, 1);
       return null;
     },
+    extension_list: () => extensions.map((e) => ({ ...e })),
+    extension_hooks: () => ({
+      context_menus: extHooks.context_menus.map((m) => ({ ...m })),
+      tabs: extHooks.tabs.map((t) => ({ ...t })),
+    }),
+    extension_load: (a) => {
+      const path = (a && a.path) || "";
+      const extId = a && a.extId;
+      if (extId) {
+        const row = extensions.find((x) => x.id === extId);
+        if (!row) throw new Error(`extension ${extId} not found`);
+        row.error = null;
+        row.loaded_at = new Date().toISOString().replace("T", " ").slice(0, 19);
+        row.enabled = true;
+        row.hook_errors = 0;
+        return extId;
+      }
+      const name = path.split(/[\\/]/).pop().replace(/\.js$/, "") || path;
+      const id = extSeq++;
+      extensions.push({
+        id,
+        name,
+        path,
+        enabled: true,
+        error: null,
+        loaded_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+        created_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+        hook_errors: 0,
+      });
+      return id;
+    },
+    extension_set_enabled: (a) => {
+      const row = extensions.find((x) => x.id === ((a && a.extId) || 0));
+      if (!row) throw new Error(`extension ${(a && a.extId) || 0} not found`);
+      row.enabled = !!(a && a.enabled);
+      return null;
+    },
+    extension_delete: (a) => {
+      const id = (a && a.extId) || 0;
+      const i = extensions.findIndex((x) => x.id === id);
+      if (i < 0) throw new Error(`extension ${id} not found`);
+      extensions.splice(i, 1);
+      return null;
+    },
+    extension_read_file: (a) => `// mock source for ${(a && a.path) || "?"}`,
+    extension_context_invoke: () => null,
+    extension_tab_render: (a) =>
+      a && a.extId === 1 && a.tabId === 0
+        ? "<h1>Hello tab</h1><p>Mock extension tab.</p>"
+        : "<p>No tab</p>",
   };
 
   const callbacks = {};

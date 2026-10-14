@@ -114,3 +114,22 @@ async function loadRelease() {
 }
 
 document.addEventListener("DOMContentLoaded", loadRelease);
+
+// Scroll-reveal
+const revealEls = document.querySelectorAll(".reveal");
+if ("IntersectionObserver" in window && revealEls.length) {
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add("visible");
+          io.unobserve(e.target);
+        }
+      });
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -60px 0px" }
+  );
+  revealEls.forEach((el) => io.observe(el));
+} else {
+  revealEls.forEach((el) => el.classList.add("visible"));
+}

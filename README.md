@@ -42,6 +42,7 @@ npm run tauri dev
 - [QA Harness](#qa-harness)
 - [Scope \& Limitations](#scope--limitations)
 - [Repository](#repository)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 - [Developed by](#developed-by)
 
@@ -154,7 +155,13 @@ python qa\shot.py        # screenshots against the dev server, fails on console 
 
 ## Repository
 
-Private: https://github.com/jojin1709/webproxy-toolkit
+https://github.com/jojin1709/webproxy-toolkit
+
+## License
+
+Licensed under the **Business Source License 1.1 (BUSL-1.1)** — see [LICENSE](LICENSE).
+
+In short: the source is viewable, but you may not reuse, rebrand, resell, or offer it as a hosted/managed service, or build a competing commercial product. On **2030-10-14** it converts to **AGPL-3.0**. See the Additional Use Grant in [LICENSE](LICENSE) for the exact terms.
 
 ## Acknowledgements
 
@@ -165,4 +172,4 @@ Private: https://github.com/jojin1709/webproxy-toolkit
 
 ## Developed by
 
-**JOJIN JOHN**
+**[JOJIN JOHN](https://www.linkedin.com/in/jojin-john/)**

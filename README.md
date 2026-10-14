@@ -1,21 +1,69 @@
+<div align="center">
+
+<img src="app/src-tauri/icons/128x128@2x.png" alt="WebProxy Toolkit" width="96" height="96">
+
 # WebProxy Toolkit
 
-A Burp Suite–style web security workbench that runs entirely on your machine — no license server, no account, no telemetry. Clean-room implementation: original UI and code, built from observed behavior only.
+### A Burp Suite–style web security workbench that runs entirely on your machine.
 
-![Dashboard](docs/screenshot-dashboard.png)
+**No license server. No account. No telemetry.** Clean-room implementation — original UI and code, built from observed behavior only.
 
-## Status
+```powershell
+cd app
+npm install
+npm run tauri dev
+```
 
-| Phase | Feature | State |
-|-------|---------|-------|
-| 1 | App shell, Proxy (history / intercept / options), Target, Repeater, Decoder, Settings | done |
-| 2a | Comparer, Sequencer, Logger (+ Dashboard event log) | done |
-| 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | done |
-| 3 | Intruder (attack engine, positions, payload sets, results) | done |
-| 4 | Passive scanner, Issues view, active audit, crawling, scan configs | done |
-| 6 | Extensions (embedded JS engine, Burp-like extension API) | done |
-| 7 | Collaborator (local out-of-band interaction server) | done |
-| 8 | Session handling & macros, upstream proxy, TLS options, multi-listener, shortcuts | done |
+<sub>Local MITM proxy · Repeater · Intruder · Scanner · Collaborator · Extensions — all offline.</sub>
+
+---
+
+<img src="docs/screenshot-dashboard.png" alt="WebProxy Toolkit dashboard" width="100%">
+
+</div>
+
+> [!NOTE]
+> **Authorized testing only.** WebProxy Toolkit actively intercepts and rewrites traffic. Run it only against systems you own or have explicit permission to test.
+
+---
+
+## Table of Contents
+
+- [Table of Contents](#table-of-contents)
+- [What is WebProxy Toolkit?](#what-is-webproxy-toolkit)
+  - [Why It Exists](#why-it-exists)
+  - [Clean-room by design](#clean-room-by-design)
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Run it](#run-it)
+- [Architecture](#architecture)
+- [Status](#status)
+- [QA Harness](#qa-harness)
+- [Scope \& Limitations](#scope--limitations)
+- [Repository](#repository)
+- [Acknowledgements](#acknowledgements)
+- [Developed by](#developed-by)
+
+## What is WebProxy Toolkit?
+
+WebProxy Toolkit is a full web security workbench — a local interception proxy with the tool suite you'd expect from a professional testing platform — that runs entirely on your own machine. Point your browser at it, intercept and rewrite traffic, replay and fuzz requests, crawl and scan targets, spin up a local out-of-band interaction server, and extend it with JavaScript — all offline.
+
+<a id="why-it-exists"></a>
+<details>
+<summary><strong>Why It Exists</strong></summary>
+
+Professional proxy suites are powerful but heavy: license servers, accounts, telemetry, and a footprint that doesn't fit every environment. WebProxy Toolkit is a self-contained desktop app that gives you the core interception, replay, fuzzing, and scanning workflow with zero external dependencies — your data stays in a single local project file.
+
+</details>
+
+<a id="clean-room-by-design"></a>
+<details>
+<summary><strong>Clean-room by design</strong></summary>
+
+No PortSwigger code, assets, or copied text. The UI and implementation are original, built from observed behavior of the workflow it emulates. Icons are Lucide; the font is Inter.
+
+</details>
 
 ## Features
 
@@ -29,15 +77,32 @@ A Burp Suite–style web security workbench that runs entirely on your machine �
 - **Decoder** — encode/decode transforms (URL, Base64, hex, …).
 - **Scanner** — passive checks on every in-scope response (17 header/cookie/banner/info-leak checks), active audit engine that crawls a target and tests parameters (SQL injection, reflected XSS, path traversal, open redirect, sensitive files), issue framework with dedupe/severity/confidence, issue detail with linked exchange, named scan configs (limits, threads, throttle, enabled checks) with an issue-definitions catalog, and Dashboard scan tasks with live progress + pause/resume/cancel.
 - **Extensions** — embedded QuickJS engine with our own `wpt` JavaScript API: proxy listeners, HTTP handlers (request/response rewriting in the relay), context-menu actions in Proxy and Repeater, and custom report tabs rendered in sandboxed iframes; per-extension error latch (disable after 5 consecutive failures) with an error console in the Extensions panel.
-- **Collaborator** — local out-of-band interaction server: DNS + HTTP listeners, payload generation (URL / HTML / hostname), per-payload subdomains, and a live interaction log fed by Tauri events.
+- **Collaborator** — local out-of-band interaction server: configurable DNS (UDP) and HTTP listeners, payload generation (URL / HTML img / hostname with unique subdomains), live interaction log (DNS queries with qtype, HTTP requests with method/path/headers/body) pushed to the UI in real time, payload filtering and clipboard copy.
 - **Upstream & TLS options** — upstream proxy chaining (host-pattern rules, plain or TLS to the proxy), TLS pass-through hosts (raw tunnel, no MITM — for cert-pinned targets), and extra proxy listeners sharing all options.
 - **Session handling** — rule engine with macros: replay a macro (ordered raw requests), extract cookie/header/body values, and auto-set headers/cookies/params on matching traffic before it leaves the proxy.
 - **Shortcuts** — global keyboard shortcuts: Ctrl+Shift+F search, Ctrl+1…0 tool-tab switching, Esc to close dialogs.
-- **Collaborator** — local out-of-band interaction server: configurable DNS (UDP) and HTTP listeners, payload generation (URL / HTML img / hostname with unique subdomains), live interaction log (DNS queries with qtype, HTTP requests with method/path/headers/body) pushed to the UI in real time, payload filtering and clipboard copy.
 - **Dashboard** — project summary, scan tasks (crawl/audit) with live progress, issues with severity counts, event log, scanner audit log.
 - **A11y & theme** — full keyboard navigation, ARIA roles, WCAG AA contrast, dark Burp-like theme, responsive down to ~1000 px.
 
-![Proxy history](docs/screenshot-proxy-history.png)
+## Quick Start
+
+### Prerequisites
+
+- **Node.js ≥ 20** and **npm**.
+- **Rust** (stable) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+- **Python 3** + Playwright (optional, for the QA screenshot harness).
+
+### Run it
+
+```powershell
+cd app
+npm install
+npm run tauri dev        # opens the desktop app; UI at http://localhost:1420
+```
+
+Other scripts: `npm run build` (strict `tsc` + Vite), `cargo test` (in `app/src-tauri`).
+
+For browser-driven testing, start the backend with `WEBPROXY_AUTOSTART=18080` to auto-start the proxy listener on the given port.
 
 ## Architecture
 
@@ -60,29 +125,28 @@ replica/          parity inventory (features.csv), design tokens, recon notes
 - Project data lives in `%LOCALAPPDATA%\WebProxyToolkit\` (`project.wpt`, `ca.crt`, `ca.key`, body blobs).
 - The UI talks to Rust only through `#[tauri::command]` handlers registered in `lib.rs`.
 
-## Getting started
+## Status
 
-Prerequisites: Node.js ≥ 20, Rust (stable), the Tauri 2 [prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+| Phase | Feature | State |
+|-------|---------|-------|
+| 1 | App shell, Proxy (history / intercept / options), Target, Repeater, Decoder, Settings | done |
+| 2a | Comparer, Sequencer, Logger (+ Dashboard event log) | done |
+| 2b | WebSocket history, global search, Repeater per-tab history & follow-redirects, intercept Action menu | done |
+| 3 | Intruder (attack engine, positions, payload sets, results) | done |
+| 4 | Passive scanner, Issues view, active audit, crawling, scan configs | done |
+| 6 | Extensions (embedded JS engine, Burp-like extension API) | done |
+| 7 | Collaborator (local out-of-band interaction server) | done |
+| 8 | Session handling & macros, upstream proxy, TLS options, multi-listener, shortcuts | done |
+
+## QA Harness
 
 ```powershell
-cd app
-npm install
-npm run tauri dev        # opens the desktop app; UI at http://localhost:1420
+python qa\shot.py        # screenshots against the dev server, fails on console errors
 ```
 
-Other scripts: `npm run build` (strict `tsc` + Vite), `cargo test` (in `app/src-tauri`).
+`qa/mock.js` shims the Tauri IPC so the UI runs in a plain browser; `window.__SCENARIO__` switches fixtures (held request, stopped listener, …). Screenshots land in `qa/shots/` (gitignored). `python qa\a11y.py` runs axe accessibility audits on key panels.
 
-For browser-driven testing, start the backend with `WEBPROXY_AUTOSTART=18080` to auto-start the proxy listener on the given port.
-
-### QA harness
-
-```powershell
-python qa\shot.py        # 38 screenshots against the dev server, fails on console errors
-```
-
-`qa/mock.js` shims the Tauri IPC so the UI runs in a plain browser; `window.__SCENARIO__` switches fixtures (held request, stopped listener, …). Screenshots land in `qa/shots/` (gitignored).
-
-## Scope & limitations
+## Scope & Limitations
 
 - Local-only: no license validation, no cloud, no Burp compatibility claims.
 - Clean-room: no PortSwigger code, assets, or copied text; icons are Lucide, font is Inter.
@@ -91,3 +155,14 @@ python qa\shot.py        # 38 screenshots against the dev server, fails on conso
 ## Repository
 
 Private: https://github.com/jojin1709/webproxy-toolkit
+
+## Acknowledgements
+
+- [Tauri](https://tauri.app) — desktop app framework.
+- [Lucide](https://lucide.dev) — icon set.
+- [Inter](https://rsms.me/inter/) — typeface.
+- [Playwright](https://playwright.dev) — browser automation for the QA harness.
+
+## Developed by
+
+**JOJIN JOHN**

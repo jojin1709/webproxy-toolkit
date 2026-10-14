@@ -6,13 +6,9 @@
 
 ### A Burp Suite–style web security workbench that runs entirely on your machine.
 
-**No license server. No account. No telemetry.** Clean-room implementation — original UI and code, built from observed behavior only.
+Clean-room implementation — original UI and code, built from observed behavior only.
 
-```powershell
-cd app
-npm install
-npm run tauri dev
-```
+**[Website](https://jojin1709.github.io/webproxy-toolkit/)** · **[Download](https://github.com/jojin1709/webproxy-toolkit/releases/latest)**
 
 <sub>Local MITM proxy · Repeater · Intruder · Scanner · Collaborator · Extensions — all offline.</sub>
 
@@ -34,12 +30,9 @@ npm run tauri dev
   - [Why It Exists](#why-it-exists)
   - [Clean-room by design](#clean-room-by-design)
 - [Features](#features)
-- [Quick Start](#quick-start)
-  - [Prerequisites](#prerequisites)
-  - [Run it](#run-it)
+- [Download](#download)
 - [Architecture](#architecture)
 - [Status](#status)
-- [QA Harness](#qa-harness)
 - [Scope \& Limitations](#scope--limitations)
 - [Repository](#repository)
 - [License](#license)
@@ -85,25 +78,13 @@ No PortSwigger code, assets, or copied text. The UI and implementation are origi
 - **Dashboard** — project summary, scan tasks (crawl/audit) with live progress, issues with severity counts, event log, scanner audit log.
 - **A11y & theme** — full keyboard navigation, ARIA roles, WCAG AA contrast, dark Burp-like theme, responsive down to ~1000 px.
 
-## Quick Start
+## Download
 
-### Prerequisites
+Grab the latest Windows installer (x64, NSIS) from the releases page:
 
-- **Node.js ≥ 20** and **npm**.
-- **Rust** (stable) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
-- **Python 3** + Playwright (optional, for the QA screenshot harness).
+**[Download for Windows →](https://github.com/jojin1709/webproxy-toolkit/releases/latest)**
 
-### Run it
-
-```powershell
-cd app
-npm install
-npm run tauri dev        # opens the desktop app; UI at http://localhost:1420
-```
-
-Other scripts: `npm run build` (strict `tsc` + Vite), `cargo test` (in `app/src-tauri`).
-
-For browser-driven testing, start the backend with `WEBPROXY_AUTOSTART=18080` to auto-start the proxy listener on the given port.
+You can also find it on the **[website](https://jojin1709.github.io/webproxy-toolkit/)**, where the download button always points to the newest release.
 
 ## Architecture
 
@@ -138,14 +119,6 @@ replica/          parity inventory (features.csv), design tokens, recon notes
 | 6 | Extensions (embedded JS engine, Burp-like extension API) | done |
 | 7 | Collaborator (local out-of-band interaction server) | done |
 | 8 | Session handling & macros, upstream proxy, TLS options, multi-listener, shortcuts | done |
-
-## QA Harness
-
-```powershell
-python qa\shot.py        # screenshots against the dev server, fails on console errors
-```
-
-`qa/mock.js` shims the Tauri IPC so the UI runs in a plain browser; `window.__SCENARIO__` switches fixtures (held request, stopped listener, …). Screenshots land in `qa/shots/` (gitignored). `python qa\a11y.py` runs axe accessibility audits on key panels.
 
 ## Scope & Limitations
 

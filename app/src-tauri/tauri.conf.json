@@ -36,14 +36,6 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "versionInfo": {
-        "companyName": "JOJIN JOHN",
-        "productName": "WebProxy Toolkit",
-        "fileDescription": "WebProxy Toolkit — offline web security workbench",
-        "legalCopyright": "Copyright © 2026 JOJIN JOHN",
-        "originalFilename": "WebProxy.Toolkit_0.1.1_x64-setup.exe",
-        "productVersion": "0.1.1"
-      },
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false,

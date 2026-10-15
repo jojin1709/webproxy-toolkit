@@ -26,8 +26,8 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "WebProxy Toolkit",
-    "copyright": "Copyright © 2026 WebProxy Toolkit",
+    "publisher": "JOJIN JOHN",
+    "copyright": "Copyright © 2026 JOJIN JOHN",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,6 +36,14 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "versionInfo": {
+        "companyName": "JOJIN JOHN",
+        "productName": "WebProxy Toolkit",
+        "fileDescription": "WebProxy Toolkit — offline web security workbench",
+        "legalCopyright": "Copyright © 2026 JOJIN JOHN",
+        "originalFilename": "WebProxy.Toolkit_0.1.1_x64-setup.exe",
+        "productVersion": "0.1.1"
+      },
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false,

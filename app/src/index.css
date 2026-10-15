@@ -775,22 +775,27 @@ textarea {
   font-size: var(--text-sm);
   line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
   color: var(--color-text);
   counter-reset: ln;
 }
 
 .msgview-pre > .ln {
   counter-increment: ln;
-  padding: 0 10px 0 0;
+  position: relative;
+  padding: 0 10px 0 56px; /* 44px gutter + 12px gap */
   min-height: 1.5em;
 }
 
+/* Gutter is absolutely positioned so wrapped continuation lines stay aligned
+   under the content instead of bleeding back into the line-number column. */
 .msgview-pre > .ln::before {
   content: counter(ln);
-  display: inline-block;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 44px;
-  margin-right: 12px;
   padding-right: 8px;
   text-align: right;
   color: var(--color-text-muted);
@@ -853,7 +858,8 @@ textarea {
   padding: 6px 10px;
   resize: none;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
   overflow-y: scroll;
 }
 

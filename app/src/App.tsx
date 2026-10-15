@@ -58,6 +58,15 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
+  // Desktop app: suppress the webview/browser default right-click menu
+  // (Back / Refresh / Save as / Print …). Context menus the app defines are
+  // custom React components and are unaffected.
+  useEffect(() => {
+    const suppress = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener("contextmenu", suppress);
+    return () => window.removeEventListener("contextmenu", suppress);
+  }, []);
+
   useEffect(() => {
     const TAB_ORDER: TabId[] = [
       "dashboard",

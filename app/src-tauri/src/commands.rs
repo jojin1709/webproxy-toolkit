@@ -194,6 +194,15 @@ pub fn history_get(state: State<'_, SharedProxy>, id: u64) -> Option<HttpExchang
     state.history.lock().iter().find(|e| e.id == id).cloned()
 }
 
+#[tauri::command]
+pub fn history_clear(state: State<'_, SharedProxy>) -> Result<usize, String> {
+    let cleared = state.history.lock().len();
+    state.history.lock().clear();
+    db_of(&state)?.clear_exchanges()?;
+    Ok(cleared)
+}
+
+
 fn parse_host_port(url: &str, default_tls: bool) -> Result<(String, u16, bool), String> {
     let u = url::Url::parse(url).map_err(|e| e.to_string())?;
     let host = u.host_str().ok_or("no host")?.to_string();
@@ -974,6 +983,7 @@ pub fn register(
             intercept_drop,
             history_list,
             history_get,
+            history_clear,
             repeater_send,
             ca_export_path,
             init_ca,

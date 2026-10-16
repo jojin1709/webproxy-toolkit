@@ -60,12 +60,7 @@ type Draft = {
   extractors: { name: string; pattern: string }[];
 };
 
-const DEFAULT_REQ =
-  "GET http://shop.example.com/ HTTP/1.1\r\n" +
-  "Host: shop.example.com\r\n" +
-  "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n" +
-  "Accept: */*\r\n" +
-  "Connection: close\r\n\r\n";
+const DEFAULT_REQ = "";
 
 const emptySlot = (n: number): Slot => ({
   name: `Set ${n}`,

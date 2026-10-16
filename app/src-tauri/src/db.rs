@@ -475,6 +475,12 @@ impl Db {
         .map_err(|e| e.to_string())
     }
 
+    pub fn clear_exchanges(&self) -> Result<usize, String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM exchanges", []).map_err(|e| e.to_string())
+    }
+
+
     pub fn list_scope(&self) -> Result<Vec<ScopeRule>, String> {
         let conn = self.conn.lock();
         let mut stmt = conn

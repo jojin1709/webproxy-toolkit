@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import { Zap } from "lucide-react";
 import { ProxyStatus, TabId } from "../types";
 
@@ -16,7 +17,14 @@ type MenuDef = { label: string; items: () => React.ReactNode };
 
 export default function MenuBar({ status, onStart, onStop, onToggleIntercept, onGoto, onAbout }: Props) {
   const [open, setOpen] = useState<string | null>(null);
+  const [version, setVersion] = useState<string>("");
   const bar = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(""));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -130,7 +138,7 @@ export default function MenuBar({ status, onStart, onStop, onToggleIntercept, on
         </div>
       ))}
       <span className="menubar-title">
-        WebProxy Toolkit v0.1.0 — Temporary Project — local, no license server
+        WebProxy Toolkit{version ? ` v${version}` : ""} — local workspace
       </span>
     </div>
   );

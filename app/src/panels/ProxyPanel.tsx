@@ -127,6 +127,7 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
   const [scopeOnly, setScopeOnly] = useState(false);
   const [history, setHistory] = useState<HttpExchange[]>([]);
   const [selected, setSelected] = useState<HttpExchange | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [held, setHeld] = useState<HeldInfo | null>(null);
   const [heldEdit, setHeldEdit] = useState("");
   const lastHeldId = useRef<number | null>(null);
@@ -180,6 +181,23 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
       setToast(String(e));
     }
   }, [filter, setToast]);
+
+  const clearHistory = useCallback(async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      window.setTimeout(() => setConfirmClear(false), 4000);
+      return;
+    }
+    setConfirmClear(false);
+    try {
+      await invoke("history_clear");
+      setSelected(null);
+      await loadHistory();
+      setToast("History cleared");
+    } catch (e) {
+      setToast(String(e));
+    }
+  }, [confirmClear, loadHistory, setToast]);
 
   useEffect(() => {
     loadHistory();
@@ -881,6 +899,13 @@ export default function ProxyPanel({ status, setStatus, setToast, sendTo, jumpTo
                 </span>
                 <button className="btn" onClick={loadHistory} title="Reload history">
                   Refresh
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => void clearHistory()}
+                  title="Clear all history"
+                >
+                  {confirmClear ? "Confirm clear?" : "Clear"}
                 </button>
               </div>
             </>

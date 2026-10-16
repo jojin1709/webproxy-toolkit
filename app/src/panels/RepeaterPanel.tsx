@@ -37,12 +37,11 @@ export default function RepeaterPanel({ incoming, setToast }: Props) {
   const [tabs, setTabs] = useState<RepeaterTab[]>([]);
   const [draft, setDraft] = useState<Draft>({
     ...NEW_DRAFT,
-    req:
-      "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nUser-Agent: WebProxy-Toolkit/0.1\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+    req: "",
   });
   const [busy, setBusy] = useState(false);
   const [stacked, setStacked] = useState(false);
-  const [urlHint, setUrlHint] = useState("http://example.com/");
+  const [urlHint, setUrlHint] = useState("");
   const [editingTarget, setEditingTarget] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
   const [follow, setFollow] = useState(false);
